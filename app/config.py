@@ -12,6 +12,8 @@ class Settings(BaseSettings):
     # ---- 服务监听地址（供 python -m app.main 启动时使用）----
     HTTP_HOST: str = "127.0.0.1"
     HTTP_PORT: int = 8000
+    # 是否开启热重载（Windows 上 reload 偶发崩溃，默认关闭；开发时设 HTTP_RELOAD=true）
+    HTTP_RELOAD: bool = False
 
     # ---- 数据库连接 ----
     DB_HOST: str = "127.0.0.1"
@@ -23,6 +25,10 @@ class Settings(BaseSettings):
     # ---- CORS 允许来源 ----
     # 逗号分隔，如 "http://localhost:5173,http://127.0.0.1:5173"；"*" 表示全部放开
     CORS_ORIGINS: str = "*"
+
+    # ---- 定时同步行情（工作日收盘后触发）----
+    SYNC_HOUR: int = 17
+    SYNC_MINUTE: int = 30
 
     model_config = SettingsConfigDict(
         env_file=_BASE_DIR / ".env",

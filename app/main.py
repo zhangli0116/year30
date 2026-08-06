@@ -1,5 +1,7 @@
 from contextlib import asynccontextmanager
 
+from apscheduler.schedulers.background import BackgroundScheduler
+from apscheduler.triggers.cron import CronTrigger
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -14,7 +16,12 @@ from app.routers import price as price_router
 from app.routers import purchase as purchase_router
 from app.routers import quarter as quarter_router
 from app.routers import quote as quote_router
+from app.routers import sync as sync_router
+from app.routers import xirr as xirr_router
 from app.schemas import ApiResponse, success
+from app.services import sync as sync_service
+
+_scheduler: BackgroundScheduler | None = None
 
 
 @asynccontextmanager
@@ -22,7 +29,28 @@ async def lifespan(_: FastAPI):
     # 仅补建缺失的表，不会改动已有表结构（表结构由 schema.sql 管理）
     Base.metadata.create_all(bind=engine)
     logger.info(f"数据库表检查完成（日志目录：{LOG_DIR}）")
+
+    # 定时同步行情：工作日收盘后（默认 17:30，可 .env 调整）
+    global _scheduler
+    _scheduler = BackgroundScheduler(timezone="Asia/Shanghai")
+    _scheduler.add_job(
+        sync_service.run_scheduled_sync,
+        CronTrigger(
+            day_of_week="mon-fri",
+            hour=settings.SYNC_HOUR,
+            minute=settings.SYNC_MINUTE,
+        ),
+        id="daily_sync",
+        replace_existing=True,
+        misfire_grace_time=3600,
+    )
+    _scheduler.start()
+    logger.info(
+        f"定时同步已启动：工作日 {settings.SYNC_HOUR}:{settings.SYNC_MINUTE:02d}（Asia/Shanghai）"
+    )
     yield
+    if _scheduler is not None:
+        _scheduler.shutdown(wait=False)
 
 
 app = FastAPI(
@@ -53,6 +81,8 @@ app.include_router(price_router.router)
 app.include_router(purchase_router.router)
 app.include_router(quarter_router.router)
 app.include_router(quote_router.router)
+app.include_router(sync_router.router)
+app.include_router(xirr_router.router)
 
 
 @app.get("/", response_model=ApiResponse)
@@ -69,5 +99,5 @@ if __name__ == "__main__":
         "app.main:app",
         host=settings.HTTP_HOST,
         port=settings.HTTP_PORT,
-        reload=True,
+        reload=settings.HTTP_RELOAD,
     )

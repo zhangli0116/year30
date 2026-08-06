@@ -94,3 +94,13 @@ export const quartersApi = {
   // POST /api/v1/quarters/{id}/recalc
   recalc: (id) => request.post(`/quarters/${id}/recalc`),
 }
+
+export const xirrApi = {
+  // GET /api/v1/xirr → {account: {...}, funds: [...]}
+  get: () => request.get('/xirr'),
+}
+
+export const syncApi = {
+  // POST /api/v1/sync/all —— 一键同步全部行情并生成权益/现金流
+  all: () => request.post('/sync/all'),
+}

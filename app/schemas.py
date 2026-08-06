@@ -345,3 +345,46 @@ class QuoteOut(BaseModel):
 class QuoteListOut(BaseModel):
     quotes: list[QuoteOut]
     source: str = "tencent"
+
+
+# =========================================================
+# XIRR 年化收益
+# =========================================================
+
+
+class XirrFundOut(BaseModel):
+    fund_id: int
+    fund_code: str
+    fund_name: str
+    xirr: Optional[float] = None  # 年化收益（小数，如 0.1234=12.34%），None=不可算
+    current_mv: float = 0  # 期末市值
+    invested: float = 0  # 累计投入（买入金额，含手续费）
+
+
+class XirrAccountOut(BaseModel):
+    xirr: Optional[float] = None  # 全账户资金加权年化
+    invested: float = 0  # 累计投入 = Σ 季度预算
+    current_value: float = 0  # 期末总资产 = 权益市值 + 现金
+    gain: float = 0  # 收益额
+    gain_pct: Optional[float] = None  # 收益率(%)
+    start_date: Optional[str] = None  # 首次投入日期
+
+
+class XirrOut(BaseModel):
+    account: XirrAccountOut
+    funds: list[XirrFundOut]
+
+
+# =========================================================
+# 一键同步全部
+# =========================================================
+
+
+class SyncAllOut(BaseModel):
+    funds: int = Field(0, description="处理的基金数")
+    prices_inserted: int = Field(0, description="新增日线条数")
+    holdings_generated: int = Field(0, description="生成的权益流水天数")
+    cash_generated: int = Field(0, description="生成的现金流天数")
+    failures: int = Field(0, description="失败的基金数")
+    range_start: Optional[date] = None
+    range_end: Optional[date] = None

@@ -33,6 +33,95 @@
       </el-col>
     </el-row>
 
+    <!-- XIRR 年化收益 -->
+    <el-card shadow="never" class="xirr-card">
+      <template #header>
+        <div class="card-header">
+          <span>年化收益（XIRR）</span>
+          <span class="header-note">资金加权年化：全账户按季度预算到账时点，单基金按实际买卖现金流</span>
+        </div>
+      </template>
+      <div class="xirr-body">
+        <div class="xirr-account">
+          <div class="stat-label">全账户</div>
+          <div
+            class="xirr-big"
+            :class="xirrData.account.xirr != null && xirrData.account.xirr >= 0 ? 'up' : 'down'"
+          >
+            {{ fmtXirr(xirrData.account.xirr) }}
+          </div>
+          <div class="xirr-meta">
+            投入 ¥{{ money(xirrData.account.invested) }}
+            <span class="muted">→</span>
+            现值 ¥{{ money(xirrData.account.current_value) }}
+          </div>
+          <div class="xirr-meta">
+            收益
+            <span :class="xirrData.account.gain >= 0 ? 'up' : 'down'">
+              {{ signed(xirrData.account.gain) }}（{{ pct(xirrData.account.gain_pct) }}）
+            </span>
+            <span class="muted">· 首投 {{ xirrData.account.start_date || '—' }}</span>
+          </div>
+        </div>
+        <div class="xirr-divider"></div>
+        <div class="xirr-funds">
+          <div class="xirr-fhead">
+            <span>单基金</span>
+            <span class="muted">年化</span>
+            <span class="muted">投入</span>
+            <span class="muted">现值</span>
+          </div>
+          <div v-for="f in xirrData.funds" :key="f.fund_id" class="xirr-frow">
+            <span class="xirr-fname">{{ f.fund_code }} {{ f.fund_name }}</span>
+            <span class="xirr-fval" :class="f.xirr != null && f.xirr >= 0 ? 'up' : 'down'">
+              {{ fmtXirr(f.xirr) }}
+            </span>
+            <span class="xirr-fnum">{{ money(f.invested) }}</span>
+            <span class="xirr-fnum">{{ money(f.current_mv) }}</span>
+          </div>
+          <div v-if="!xirrData.funds.length" class="muted">暂无基金数据</div>
+        </div>
+      </div>
+    </el-card>
+
+    <!-- 再平衡状态 -->
+    <el-card shadow="never" class="rb-card">
+      <template #header>
+        <div class="card-header">
+          <span>再平衡状态</span>
+          <span class="header-note">当前市值占比 vs 目标占比（含现金）；±1% 内视为达标，可到「季度计算器」调整配比</span>
+        </div>
+      </template>
+      <div class="rb-body">
+        <div v-for="row in rbRows" :key="row.fund_code || row.id" class="rb-row">
+          <div class="rb-name">
+            <span class="rb-code">{{ row.fund_code || '现金' }}</span>
+            <span class="rb-name-text">{{ row.fund_name }}</span>
+          </div>
+          <div class="rb-track">
+            <el-progress
+              :percentage="rbPct(row)"
+              :color="rbColor(row)"
+              :stroke-width="10"
+              :show-text="false"
+            />
+            <div
+              v-if="row.target_ratio != null"
+              class="rb-marker"
+              :style="{ left: rbMarkerLeft(row) }"
+              :title="`目标 ${Number(row.target_ratio).toFixed(1)}%`"
+            ></div>
+          </div>
+          <div class="rb-text">
+            {{ row.realRatio == null ? '—' : row.realRatio.toFixed(1) + '%' }}
+            <span class="muted">/ 目标 {{ row.target_ratio == null ? '—' : Number(row.target_ratio).toFixed(1) + '%' }}</span>
+          </div>
+          <el-tag size="small" effect="plain" :type="rbTagType(row)">{{ rbSuggestion(row) }}</el-tag>
+        </div>
+        <div v-if="!rbRows.length" class="muted">暂无持仓</div>
+      </div>
+    </el-card>
+
     <el-card shadow="never" class="chart-card">
       <template #header>
         <div class="card-header">
@@ -66,6 +155,9 @@
           <span>持仓汇总（按当前市值）</span>
           <div class="header-right">
             <span v-if="quoteTime" class="header-note">行情更新：{{ quoteTime }}</span>
+            <el-button size="small" :loading="syncing" @click="syncAll">
+              <el-icon style="margin-right: 4px"><Refresh /></el-icon>同步全部行情
+            </el-button>
             <el-button size="small" type="primary" :loading="loadingQuote" @click="loadQuotes">
               获取最新价
             </el-button>
@@ -136,19 +228,25 @@
 
 <script setup>
 import { computed, onMounted, ref } from 'vue'
+import { ElMessage } from 'element-plus'
 import QuarterChart from '../components/QuarterChart.vue'
 import TotalEquityChart from '../components/TotalEquityChart.vue'
-import { fundsApi, purchasesApi, quartersApi, quotesApi } from '../api'
+import { fundsApi, purchasesApi, quartersApi, quotesApi, syncApi, xirrApi } from '../api'
 
 const CASH_CODE = '000000'
 
 const loading = ref(false)
 const loadingQuote = ref(false)
+const syncing = ref(false)
 const quoteTime = ref(null)
 const summary = ref({ funds: [], total_invested: 0, total_capital: null, cash_ratio: null })
 const quarters = ref([]) // quarter 表：承载预算与现金
 const prices = ref({}) // fund_code -> 最新价
 const purchases = ref([]) // 购买记录（用于季度趋势图按份额累计市值）
+const xirrData = ref({
+  account: { xirr: null, invested: 0, current_value: 0, gain: 0, gain_pct: null, start_date: null },
+  funds: [],
+})
 
 // 现金余额 = Σ quarter.cash_amount；累计投入 = Σ quarter.budget
 const cashBalance = computed(() =>
@@ -293,18 +391,74 @@ async function loadQuotes() {
 async function loadData() {
   loading.value = true
   try {
-    const [sumData, quarterData, purchaseData] = await Promise.all([
+    const [sumData, quarterData, purchaseData, xirr] = await Promise.all([
       fundsApi.summary(),
       quartersApi.list(),
       purchasesApi.list({ page: 1, page_size: 100 }), // 含买卖，供趋势图累计份额
+      xirrApi.get().catch(() => ({ account: xirrData.value.account, funds: [] })),
     ])
     summary.value = sumData
     quarters.value = quarterData || []
     purchases.value = purchaseData?.items || []
+    xirrData.value = xirr
     await loadQuotes()
   } finally {
     loading.value = false
   }
+}
+
+// 一键同步全部行情（补拉日线 + 生成权益/现金流），完成后刷新页面数据
+async function syncAll() {
+  syncing.value = true
+  try {
+    const r = await syncApi.all()
+    ElMessage.success(
+      `已同步 ${r.funds} 只基金：新增日线 ${r.prices_inserted} 根、权益流水 ${r.holdings_generated} 天、现金流 ${r.cash_generated} 天`
+    )
+    await loadData()
+  } catch {
+    // 具体错误已由拦截器弹出
+  } finally {
+    syncing.value = false
+  }
+}
+
+// XIRR 显示：小数 → 百分比；null → —
+function fmtXirr(v) {
+  return v == null ? '—' : `${(v * 100).toFixed(2)}%`
+}
+
+// 再平衡卡片：排除手续费行（基金 + 现金）
+const rbRows = computed(() => rows.value.filter((r) => !r.isFee))
+function rbPct(row) {
+  if (row.realRatio == null) return 0
+  return Math.min(100, Math.max(0, row.realRatio))
+}
+function rbMarkerLeft(row) {
+  return `${Math.min(100, Number(row.target_ratio))}%`
+}
+function rbColor(row) {
+  if (row.target_ratio == null) return '#c0c4cc'
+  if (row.ratioStatus === 'above') return '#f56c6c'
+  if (row.ratioStatus === 'below') return '#e6a23c'
+  return '#409eff'
+}
+function rbTagType(row) {
+  if (row.target_ratio == null) return 'info'
+  if (row.ratioStatus === 'above') return 'danger'
+  if (row.ratioStatus === 'below') return 'warning'
+  return 'success'
+}
+function rbSuggestion(row) {
+  if (row.target_ratio == null) return '未设目标'
+  if (row.isCash) {
+    if (row.ratioStatus === 'above') return '现金偏多，可买入'
+    if (row.ratioStatus === 'below') return '现金偏低'
+    return '达标'
+  }
+  if (row.ratioStatus === 'above') return '超配，可减仓'
+  if (row.ratioStatus === 'below') return '低配，可加仓'
+  return '达标'
 }
 
 function tableSummary({ columns }) {
@@ -424,5 +578,139 @@ onMounted(loadData)
   margin-top: 12px;
   color: #909399;
   font-size: 13px;
+}
+.xirr-card,
+.rb-card,
+.chart-card {
+  margin-bottom: 16px;
+}
+.xirr-body {
+  display: flex;
+  gap: 24px;
+  align-items: stretch;
+}
+.xirr-account {
+  width: 300px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  padding-right: 24px;
+}
+.xirr-big {
+  font-size: 34px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.1;
+  margin-bottom: 8px;
+}
+.xirr-meta {
+  color: #606266;
+  font-size: 13px;
+  line-height: 1.7;
+}
+.xirr-divider {
+  width: 1px;
+  background: #ebeef5;
+  flex-shrink: 0;
+}
+.xirr-funds {
+  flex: 1;
+  min-width: 0;
+}
+.xirr-fhead,
+.xirr-frow {
+  display: grid;
+  grid-template-columns: 1fr 90px 110px 110px;
+  gap: 8px;
+  align-items: center;
+}
+.xirr-fhead {
+  color: #909399;
+  font-size: 12px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid #ebeef5;
+  margin-bottom: 4px;
+}
+.xirr-frow {
+  padding: 6px 0;
+  border-bottom: 1px solid #f5f7fa;
+  font-size: 13px;
+}
+.xirr-frow:last-child {
+  border-bottom: none;
+}
+.xirr-fname {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.xirr-fval {
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.xirr-fnum {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.rb-body {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(420px, 1fr));
+  gap: 6px 32px;
+}
+.rb-row {
+  display: grid;
+  grid-template-columns: 150px 1fr 190px 86px;
+  align-items: center;
+  gap: 12px;
+  padding: 5px 0;
+}
+.rb-name {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+}
+.rb-code {
+  color: #909399;
+  font-size: 12px;
+}
+.rb-name-text {
+  font-size: 13px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.rb-track {
+  position: relative;
+}
+.rb-track .el-progress {
+  width: 100%;
+}
+.rb-marker {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: #303133;
+  border-radius: 1px;
+  opacity: 0.55;
+}
+.rb-text {
+  font-size: 12px;
+  color: #606266;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.rb-text .muted {
+  color: #c0c4cc;
+}
+.rb-row .el-tag {
+  justify-self: end;
+}
+@media (max-width: 1100px) {
+  .rb-row {
+    grid-template-columns: 130px 1fr 150px 80px;
+  }
 }
 </style>
