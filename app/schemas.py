@@ -148,9 +148,6 @@ class FundBase(BaseModel):
     fund_name: str = Field(..., min_length=1, max_length=64, description="基金名称")
     exchange: str = Field("上交所", max_length=16, description="交易所")
     currency: str = Field("CNY", max_length=3, description="币种")
-    target_ratio: Optional[Decimal] = Field(
-        None, ge=0, le=100, decimal_places=2, description="目标配置比例(%)，NULL=未设置"
-    )
 
 
 class FundCreate(FundBase):
@@ -162,9 +159,6 @@ class FundUpdate(BaseModel):
     fund_name: Optional[str] = Field(None, min_length=1, max_length=64, description="基金名称")
     exchange: Optional[str] = Field(None, max_length=16, description="交易所")
     currency: Optional[str] = Field(None, max_length=3, description="币种")
-    target_ratio: Optional[Decimal] = Field(
-        None, ge=0, le=100, decimal_places=2, description="目标配置比例(%)，NULL=未设置"
-    )
 
 
 class FundOut(FundBase):
@@ -179,7 +173,7 @@ class FundDetail(FundOut):
 
 
 class FundSummary(BaseModel):
-    """每只基金的汇总统计（含配置比例）。"""
+    """每只基金的汇总统计（含该方案内的目标占比）。"""
 
     fund_id: int
     fund_code: str
@@ -188,7 +182,7 @@ class FundSummary(BaseModel):
     total_shares: int
     total_cost: Decimal
     avg_cost: Optional[Decimal] = None
-    target_ratio: Optional[Decimal] = None
+    target_ratio: Optional[Decimal] = None  # 该方案内 plan_fund 目标占比
     real_ratio: Optional[Decimal] = None
 
 

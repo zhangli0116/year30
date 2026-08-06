@@ -296,10 +296,9 @@ const totalFee = computed(() =>
   quarters.value.reduce((s, q) => s + Number(q.total_fee || 0), 0)
 )
 
-// 现金目标比例：取现金基金 target_ratio；缺失时按 100 − Σ基金目标 兜底
+// 现金目标比例：取 summary.cash_ratio（= 方案 cash_ratio，按方案区分）；缺失时按 100 − Σ基金目标 兜底
 const cashTargetRatio = computed(() => {
-  const cashFund = (summary.value.funds || []).find((f) => f.fund_code === CASH_CODE)
-  if (cashFund?.target_ratio != null) return Number(cashFund.target_ratio)
+  if (summary.value.cash_ratio != null) return Number(summary.value.cash_ratio)
   const sum = (summary.value.funds || [])
     .filter((f) => f.fund_code !== CASH_CODE)
     .reduce((s, f) => s + (f.target_ratio != null ? Number(f.target_ratio) : 0), 0)

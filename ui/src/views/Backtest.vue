@@ -62,10 +62,24 @@
         </div>
       </div>
 
+      <!-- 汇总横幅：覆盖不完整时必有提示 -->
+      <el-alert
+        v-if="coverage && !coverage.ready"
+        :type="actionableMissing.length ? 'warning' : 'info'"
+        :closable="false"
+        class="cov-alert"
+        :title="coverageSummary"
+      />
+
       <!-- 可补的真实缺口：警告 + 去补历史 -->
-      <el-alert v-if="actionableMissing.length" type="warning" :closable="false" class="cov-alert">
+      <el-alert
+        v-if="actionableMissing.length"
+        type="warning"
+        :closable="false"
+        class="cov-alert"
+        title="以下标的存在缺失的交易日，回测结果可能不完整："
+      >
         <div class="cov-body">
-          <span>以下标的存在缺失的交易日，回测结果可能不完整：</span>
           <div class="cov-tags">
             <el-tag
               v-for="it in actionableMissing"
@@ -102,9 +116,14 @@
       </el-alert>
 
       <!-- 数据起点晚于起始日：仅信息提示（多为上市较晚，无需补历史） -->
-      <el-alert v-if="lateStartItems.length" type="info" :closable="false" class="cov-alert">
+      <el-alert
+        v-if="lateStartItems.length"
+        type="info"
+        :closable="false"
+        class="cov-alert"
+        title="以下标的数据起点晚于回测起始日，此前区间它们不参与回测（多为上市较晚）："
+      >
         <div class="cov-body">
-          <span>以下标的数据起点晚于回测起始日，此前区间它们不参与回测（多为上市较晚）：</span>
           <div class="cov-tags">
             <el-tag
               v-for="it in lateStartItems"
@@ -289,6 +308,15 @@ const missingItems = computed(() =>
 )
 const actionableMissing = computed(() => missingItems.value.filter((i) => i.actionable))
 const lateStartItems = computed(() => missingItems.value.filter((i) => !i.actionable))
+// 覆盖不完整汇总（供顶部横幅）：X 项可补历史、Y 项起点晚
+const coverageSummary = computed(() => {
+  const act = actionableMissing.value.length
+  const late = lateStartItems.value.length
+  const parts = []
+  if (act) parts.push(`${act} 项存在缺失交易日（可补历史）`)
+  if (late) parts.push(`${late} 项数据起点晚于起始日（多为上市较晚）`)
+  return parts.length ? `数据覆盖不完整：${parts.join('、')}，详见下方` : ''
+})
 const m = computed(() => result.value?.metrics || null)
 const xirr = computed(() => (m.value ? m.value.xirr : null))
 const twr = computed(() => (m.value ? m.value.twr : null))

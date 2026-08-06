@@ -109,6 +109,8 @@ ui/
 
 「再平衡体检」页 + Dashboard「再平衡状态」卡片共用一套偏离判定，参数（相对带 R / 绝对底线 / 绝对上限 / 金额底线）可在页面调整并落库。完整使用说明见 [docs/rebalance.md](docs/rebalance.md)。
 
+方案回测的模拟策略（每期买入式 + 年末阈值再平衡、未上市标的处理、指标口径）见 [docs/backtest.md](docs/backtest.md)。
+
 ## API 一览
 
 统一前缀 `/api/v1`，返回 `{code, message, data}`（code=0 成功）。

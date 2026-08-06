@@ -91,7 +91,7 @@ def summarize_funds(db: Session, plan_id: int | None = None) -> dict:
         - 目标比例取 plan_fund（方案内 Σ+现金=100）
         - 现金目标比例取 plan.cash_ratio（显式，落实不满仓）
         - 份额/成本只统计该方案下的购买记录（基金可跨方案，按方案拆分）
-    未提供 plan_id（兼容）时回退旧逻辑：fund.target_ratio + 100−Σ。
+    未提供 plan_id 时不返回目标比例（目标只存在方案内）。
     """
     # 方案目标配置
     plan = db.get(models.DcaPlan, plan_id) if plan_id else None
@@ -113,7 +113,6 @@ def summarize_funds(db: Session, plan_id: int | None = None) -> dict:
             models.Fund.id.label("fund_id"),
             models.Fund.fund_code,
             models.Fund.fund_name,
-            models.Fund.target_ratio,
             func.count(models.PurchaseRecord.id).label("buy_count"),
             # 份额 = 买入 − 卖出（卖出为负）
             func.sum(
@@ -142,12 +141,7 @@ def summarize_funds(db: Session, plan_id: int | None = None) -> dict:
             ).label("total_cost"),
         )
         .outerjoin(models.PurchaseRecord, join_cond)
-        .group_by(
-            models.Fund.id,
-            models.Fund.fund_code,
-            models.Fund.fund_name,
-            models.Fund.target_ratio,
-        )
+        .group_by(models.Fund.id, models.Fund.fund_code, models.Fund.fund_name)
         .order_by(models.Fund.fund_code)
     ).all()
 
@@ -160,8 +154,8 @@ def summarize_funds(db: Session, plan_id: int | None = None) -> dict:
         total_shares = int(row.total_shares or 0)
         total_cost = row.total_cost or Decimal("0")
         total_invested += total_cost
-        # 目标比例：方案内用 plan_fund；否则回退基金表
-        target = target_map.get(row.fund_id, row.target_ratio)
+        # 目标比例：只取方案内 plan_fund（基金自身不再存目标比例）
+        target = target_map.get(row.fund_id)
         if target is not None:
             has_target = True
             invested_target += target

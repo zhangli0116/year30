@@ -89,9 +89,6 @@ class Fund(Base):
     fund_name: Mapped[str] = mapped_column(String(64), nullable=False, comment="基金名称")
     exchange: Mapped[str] = mapped_column(String(16), nullable=False, default="上交所", comment="交易所")
     currency: Mapped[str] = mapped_column(String(3), nullable=False, default="CNY", comment="币种")
-    target_ratio: Mapped[Optional[Decimal]] = mapped_column(
-        Numeric(5, 2), nullable=True, comment="目标配置比例(%)，NULL=未设置"
-    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime, nullable=False, server_default=func.now(), comment="创建时间"
     )

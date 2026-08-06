@@ -56,7 +56,6 @@ CREATE TABLE fund (
     fund_name   VARCHAR(64)     NOT NULL COMMENT '基金名称，如 标普500ETF',
     exchange    VARCHAR(16)     NOT NULL DEFAULT '上交所' COMMENT '上市交易所：上交所/深交所',
     currency    CHAR(3)         NOT NULL DEFAULT 'CNY' COMMENT '币种',
-    target_ratio DECIMAL(5,2)   NULL COMMENT '(已弃用) 目标比例改由 plan_fund 承载',
     created_at  DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
     PRIMARY KEY (id),
     UNIQUE KEY uk_fund_code (fund_code)

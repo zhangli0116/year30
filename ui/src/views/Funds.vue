@@ -24,11 +24,6 @@
       <el-table-column prop="fund_name" label="名称" min-width="140" />
       <el-table-column prop="exchange" label="交易所" width="100" />
       <el-table-column prop="currency" label="币种" width="80" />
-      <el-table-column label="规定比例" width="100" align="right">
-        <template #default="{ row }">
-          {{ row.target_ratio == null ? '-' : `${Number(row.target_ratio).toFixed(2)}%` }}
-        </template>
-      </el-table-column>
       <el-table-column label="操作" width="160">
         <template #default="{ row }">
           <el-button link type="primary" @click="openEdit(row)">编辑</el-button>
@@ -62,18 +57,6 @@
         </el-form-item>
         <el-form-item label="币种">
           <el-input v-model="form.currency" />
-        </el-form-item>
-        <el-form-item label="规定比例">
-          <el-input-number
-            v-model="form.target_ratio"
-            :min="0"
-            :max="100"
-            :precision="2"
-            :controls="false"
-            style="width: 100%"
-            placeholder="留空表示未设置，如 20"
-          />
-          <div class="field-tip">占总资金比例（%），留空则不参与配置统计</div>
         </el-form-item>
       </el-form>
       <template #footer>
@@ -273,7 +256,6 @@ const form = reactive({
   fund_name: '',
   exchange: '上交所',
   currency: 'CNY',
-  target_ratio: null,
 })
 
 // ---- 定投方案管理 ----
@@ -354,7 +336,6 @@ function openCreate() {
     fund_name: '',
     exchange: '上交所',
     currency: 'CNY',
-    target_ratio: null,
   })
   isEdit.value = false
   editingId.value = null
@@ -367,7 +348,6 @@ function openEdit(row) {
     fund_name: row.fund_name,
     exchange: row.exchange,
     currency: row.currency,
-    target_ratio: row.target_ratio != null ? Number(row.target_ratio) : null,
   })
   isEdit.value = true
   editingId.value = row.id
