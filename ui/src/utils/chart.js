@@ -7,7 +7,7 @@ export const colors = {
   green: '#67c23a', // 成功：资产 / 现金
   orange: '#e6a23c', // 警告：投入 / 成本
   red: '#f56c6c', // 危险：涨 / 亏损
-  purple: '#9b6cf0', // 辅助：比例类
+  violet: '#7b61ff', // 辅助：比例类（与蓝色在 CVD 下可区分）
   gray: '#909399', // 中性
 }
 
@@ -144,7 +144,7 @@ export function yAxis(name, { formatter, min, max, showSplitLine = true } = {}) 
       ...(formatter ? { formatter } : {}),
     },
     ...(showSplitLine
-      ? { splitLine: { lineStyle: { color: '#f0f2f5', type: 'dashed' } } }
+      ? { splitLine: { lineStyle: { color: '#f0f2f5' } } }
       : { splitLine: { show: false } }),
     ...(min != null ? { min } : {}),
     ...(max != null ? { max } : {}),

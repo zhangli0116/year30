@@ -9,7 +9,6 @@ import {
   barSeries,
   colors,
   fmtNum,
-  grid,
   legend,
   lineSeries,
   tooltip,
@@ -81,16 +80,26 @@ function render() {
     {
       tooltip,
       legend: { ...legend, data: ['总投入', '总市值', '权益占比'] },
-      grid: { ...grid, right: 56 }, // 右侧预留权益占比%轴刻度
-      xAxis: xAxis(s.labels, { boundaryGap: true }),
+      // 上下两个窗格共享 x 轴（small multiples），避免双 y 轴误导比较
+      axisPointer: { link: [{ xAxisIndex: 'all' }] },
+      grid: [
+        { left: 64, right: 24, top: 44, height: '52%' }, // 上：金额线
+        { left: 64, right: 24, top: '68%', height: '22%' }, // 下：权益占比柱
+      ],
+      xAxis: [
+        { ...xAxis(s.labels, { showLabel: false, boundaryGap: true }), gridIndex: 0 },
+        { ...xAxis(s.labels, { boundaryGap: true }), gridIndex: 1 },
+      ],
       yAxis: [
         yAxis('金额（元）', { formatter: fmtNum }),
-        yAxis('权益占比（%）', {
-          formatter: (v) => v + '%',
-          min: 0,
-          max: 100,
-          showSplitLine: false,
-        }),
+        {
+          ...yAxis('权益占比（%）', {
+            formatter: (v) => v + '%',
+            min: 0,
+            max: 100,
+          }),
+          gridIndex: 1,
+        },
       ],
       series: [
         lineSeries('总投入', s.invested, colors.orange, {
@@ -101,7 +110,8 @@ function render() {
         lineSeries('总市值', s.marketValue, colors.blue, {
           tooltipFormatter: (v) => fmtNum(v, 2),
         }),
-        barSeries('权益占比', s.equityRatio, colors.purple, {
+        barSeries('权益占比', s.equityRatio, colors.violet, {
+          xAxisIndex: 1,
           yAxisIndex: 1,
           tooltipFormatter: (v) => (v == null ? '-' : v + '%'),
         }),
@@ -132,6 +142,6 @@ onBeforeUnmount(() => {
 <style scoped>
 .quarter-chart {
   width: 100%;
-  height: 360px;
+  height: 400px;
 }
 </style>
