@@ -199,6 +199,130 @@ class SummaryOut(BaseModel):
 
 
 # =========================================================
+# FundPrice 历史价格 相关
+# =========================================================
+
+
+class PriceBarOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    fund_id: int
+    trade_date: date
+    open_price: Optional[Decimal] = None
+    high_price: Optional[Decimal] = None
+    low_price: Optional[Decimal] = None
+    close_price: Decimal
+    volume: Optional[int] = None
+    source: str = "tencent"
+
+
+class PriceSyncIn(BaseModel):
+    fund_id: int = Field(..., description="基金ID")
+    start_date: date = Field(..., description="起始日期")
+    end_date: date = Field(..., description="结束日期")
+    source: str = Field("tencent", description="数据源标识，如 tencent")
+
+
+class PriceSyncOut(BaseModel):
+    source: str
+    fetched: int = Field(0, description="接口拉取条数")
+    inserted: int = Field(0, description="新增入库条数")
+    existing: int = Field(0, description="已存在条数")
+    range_start: date
+    range_end: date
+
+
+class PriceSegment(BaseModel):
+    start: date
+    end: date
+
+
+class PriceCheckOut(BaseModel):
+    fund_id: int
+    start_date: date
+    end_date: date
+    missing_days: int = Field(0, description="缺失的自然日总数")
+    segments: list[PriceSegment] = Field(default_factory=list, description="缺失的时间段（连续的日历日缺口）")
+
+
+# =========================================================
+# FundHoldingDaily 每日权益流水 相关
+# =========================================================
+
+
+class HoldingOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    fund_id: int
+    trade_date: date
+    total_shares: int
+    total_hands: int
+    price: Decimal
+    equity_amount: Decimal
+
+
+class HoldingGenerateIn(BaseModel):
+    fund_id: int = Field(..., description="基金ID")
+    start_date: date = Field(..., description="起始日期")
+    end_date: date = Field(..., description="结束日期")
+
+
+class HoldingGenerateOut(BaseModel):
+    fund_id: int
+    generated: int = Field(0, description="生成/更新的日线条数")
+    range_start: date
+    range_end: date
+
+
+class HoldingCheckOut(BaseModel):
+    fund_id: int
+    start_date: date
+    end_date: date
+    missing_days: int = Field(0, description="缺失的交易日数（该区间有历史价但无流水）")
+    missing_start: Optional[date] = None
+    missing_end: Optional[date] = None
+
+
+class HoldingTotalOut(BaseModel):
+    """某日全部基金权益市值之和（来自每日权益流水）。"""
+
+    trade_date: date
+    total_equity: Decimal
+
+
+# =========================================================
+# FundCashDaily 每日现金流 相关
+# =========================================================
+
+
+class CashOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    trade_date: date
+    increment: Decimal
+    cash_amount: Decimal
+
+
+class CashGenerateIn(BaseModel):
+    start_date: date = Field(..., description="起始日期")
+    end_date: date = Field(..., description="结束日期")
+
+
+class CashGenerateOut(BaseModel):
+    generated: int = Field(0, description="生成的日线条数")
+    range_start: date
+    range_end: date
+
+
+class CashCheckOut(BaseModel):
+    start_date: date
+    end_date: date
+    missing_days: int = Field(0, description="缺失的日历日数（未生成现金流的天数）")
+    missing_start: Optional[date] = None
+    missing_end: Optional[date] = None
+
+
+# =========================================================
 # 行情（外部公开接口转发）
 # =========================================================
 

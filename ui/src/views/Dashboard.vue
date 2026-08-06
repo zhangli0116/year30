@@ -5,6 +5,7 @@
         <el-card shadow="hover">
           <div class="stat-label">总市值</div>
           <div class="stat-value">¥ {{ money(totalMv) }}</div>
+          <div class="stat-sub">权益市值 ¥{{ money(todayEquity) }} · 现金 ¥{{ money(cashBalance) }}</div>
         </el-card>
       </el-col>
       <el-col :span="6">
@@ -31,6 +32,33 @@
         </el-card>
       </el-col>
     </el-row>
+
+    <el-card shadow="never" class="chart-card">
+      <template #header>
+        <div class="card-header">
+          <span>总权益走势（日）</span>
+          <span class="header-note">历史来自每日权益流水；今日按实时价 × 持有份额</span>
+        </div>
+      </template>
+      <TotalEquityChart :today-equity="todayEquity" :quarters="quarters" />
+    </el-card>
+
+    <!-- 季度趋势：暂时注释掉，暂无用处
+    <el-card shadow="never" class="chart-card">
+      <template #header>
+        <div class="card-header">
+          <span>季度趋势</span>
+          <span class="header-note">市值统一按今天最新价估算（无历史行情）</span>
+        </div>
+      </template>
+      <QuarterChart
+        :quarters="quarters"
+        :purchases="purchases"
+        :prices="prices"
+        :funds="summary.funds"
+      />
+    </el-card>
+    -->
 
     <el-card shadow="never">
       <template #header>
@@ -108,7 +136,9 @@
 
 <script setup>
 import { computed, onMounted, ref } from 'vue'
-import { fundsApi, quartersApi, quotesApi } from '../api'
+import QuarterChart from '../components/QuarterChart.vue'
+import TotalEquityChart from '../components/TotalEquityChart.vue'
+import { fundsApi, purchasesApi, quartersApi, quotesApi } from '../api'
 
 const CASH_CODE = '000000'
 
@@ -118,6 +148,7 @@ const quoteTime = ref(null)
 const summary = ref({ funds: [], total_invested: 0, total_capital: null, cash_ratio: null })
 const quarters = ref([]) // quarter 表：承载预算与现金
 const prices = ref({}) // fund_code -> 最新价
+const purchases = ref([]) // 购买记录（用于季度趋势图按份额累计市值）
 
 // 现金余额 = Σ quarter.cash_amount；累计投入 = Σ quarter.budget
 const cashBalance = computed(() =>
@@ -191,6 +222,13 @@ const rows = computed(() => {
   return arr
 })
 
+// 今天实时总权益 = 各基金市值之和（用实时行情价 × 持有份额，不含现金/手续费）
+const todayEquity = computed(() =>
+  rows.value
+    .filter((r) => !r.isCash && !r.isFee)
+    .reduce((s, r) => s + (r.mv || 0), 0)
+)
+
 // 市值占比 vs 规定比例：超配(above)/低配(below)/正常(normal)，±1 个百分点内视为正常
 function ratioStatusOf(row) {
   if (row.realRatio == null || row.target_ratio == null) return 'normal'
@@ -255,12 +293,14 @@ async function loadQuotes() {
 async function loadData() {
   loading.value = true
   try {
-    const [sumData, quarterData] = await Promise.all([
+    const [sumData, quarterData, purchaseData] = await Promise.all([
       fundsApi.summary(),
       quartersApi.list(),
+      purchasesApi.list({ page: 1, page_size: 100 }), // 含买卖，供趋势图累计份额
     ])
     summary.value = sumData
     quarters.value = quarterData || []
+    purchases.value = purchaseData?.items || []
     await loadQuotes()
   } finally {
     loading.value = false
@@ -318,6 +358,9 @@ onMounted(loadData)
 
 <style scoped>
 .cards {
+  margin-bottom: 16px;
+}
+.chart-card {
   margin-bottom: 16px;
 }
 .stat-label {

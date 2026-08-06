@@ -13,3 +13,6 @@ ui/dist/
 # IDE
 .idea/
 .vscode/
+
+# 日志
+log/

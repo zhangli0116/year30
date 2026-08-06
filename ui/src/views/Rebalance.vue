@@ -14,8 +14,8 @@
       </template>
 
       <div class="intro-note">
-        按「规定比例」目标，<b>超配的基金卖出、低配的买入</b>，卖出回笼并入现金池后统一分配；
-        手续费 = max(5, 金额×费率)。用于买入式无法纠正的超配仓位。
+        拖动「目标占比」滑块（默认=规定比例），<b>超配的基金卖出、低配的买入</b>，卖出回笼并入现金池后统一分配，
+        现金目标 = 100 − 权益总和；手续费 = max(5, 金额×费率)。用于买入式无法纠正的超配仓位。
       </div>
 
       <el-row :gutter="16" class="cards">
@@ -72,6 +72,9 @@
             <div class="stat-value" :class="plan.cashAfter < 0 ? 'down' : ''">
               ¥ {{ money(plan.cashAfter) }}
             </div>
+            <div v-if="plan.cashPct != null" class="stat-sub">
+              ≈ {{ plan.cashPct.toFixed(2) }}%（目标 {{ plan.cashTargetPct.toFixed(1) }}%）
+            </div>
           </el-card>
         </el-col>
       </el-row>
@@ -98,9 +101,19 @@
             {{ row.currentPct == null ? '-' : row.currentPct.toFixed(2) + '%' }}
           </template>
         </el-table-column>
-        <el-table-column label="目标占比" width="90" align="right">
+        <el-table-column label="目标占比（可滑动）" min-width="200" align="center">
           <template #default="{ row }">
-            <span class="target-pct">{{ row.target_ratio == null ? '-' : Number(row.target_ratio).toFixed(2) + '%' }}</span>
+            <div class="slider-cell">
+              <el-slider
+                v-model="row.targetPct"
+                :min="0"
+                :max="sliderMax(row)"
+                :step="0.5"
+                :show-tooltip="false"
+                class="slider"
+              />
+              <span class="pct-text">{{ row.targetPct.toFixed(1) }}%</span>
+            </div>
           </template>
         </el-table-column>
         <el-table-column label="操作" width="120" align="center">
@@ -244,83 +257,105 @@ function periodFromDate(dateStr) {
   return d.getFullYear() + 'Q' + q
 }
 
-// 再平衡方案：超配卖出、低配买入，现金池 = 现有现金 + 预算 + 卖回笼 − 买支出 − 手续费
+// 滑块上限：单个滑块最大 = 100 − 其他基金目标之和，保证权益类总和 ≤ 100%（现金 ≥ 0）
+function sliderMax(row) {
+  const others = fundRows.value
+    .filter((r) => r.fund_id !== row.fund_id)
+    .reduce((s, r) => s + (r.targetPct || 0), 0)
+  return Math.max(0, 100 - others)
+}
+
+// 再平衡方案：先卖超配（四舍五入到整手），买入受「现金池 − 目标现金」约束，
+// 保证再平衡后现金回到目标比例（如 15%），而不是现金成剩余值。目标占比可滑动（默认=规定比例）。
+// 派生值先在局部数组算/读（避免读写响应式行造成自依赖），最后回写源行供模板读取。
 const plan = computed(() => {
   const rows = fundRows.value
   const currentTotal = rows.reduce((s, r) => s + (r.currentMV || 0), 0) + cashCurrent.value
   const finalTotal = currentTotal + budget.value
+  const cashTargetPct = Math.max(0, 100 - rows.reduce((s, r) => s + Number(r.targetPct || 0), 0))
+  const cashTargetValue = (finalTotal * cashTargetPct) / 100
 
-  const items = rows.map((r) => {
+  // 1) 派生值先算到局部数组（超配基金四舍五入到整手卖出）
+  const derived = rows.map((r) => {
     const price = r.price
     const handPrice = r.handPrice
     const currentMV = r.currentMV || 0
-    const targetPct = Number(r.target_ratio || 0)
+    const targetPct = Number(r.targetPct || 0)
     const targetMV = (finalTotal * targetPct) / 100
     const diff = targetMV - currentMV
-    let action = 'hold'
-    let actHands = 0
-    let actPrincipal = 0
-    let fee = 0
-
-    if (price && diff > 0) {
-      // 低配 → 买入到目标
-      const buyHands = handPrice ? Math.floor(diff / handPrice) : 0
-      if (buyHands > 0) {
-        action = 'buy'
-        actHands = buyHands
-        actPrincipal = +(buyHands * handPrice).toFixed(2)
-        fee = +Math.max(5, (actPrincipal * buyFeeRate.value) / 100).toFixed(2)
-      }
-    } else if (price && diff < 0) {
-      // 超配 → 卖出超出部分到目标
+    const d = { row: r, price, handPrice, targetMV, diff, action: 'hold', actHands: 0, actPrincipal: 0, fee: 0 }
+    if (price && diff < 0) {
       const targetShares = targetMV / price
       const excessShares = r.shares - targetShares
       const maxHands = Math.floor(r.shares / r.sharesPerHand)
-      const sellHands = Math.max(0, Math.min(Math.floor(excessShares / r.sharesPerHand), maxHands))
+      const sellHands = Math.max(0, Math.min(Math.round(excessShares / r.sharesPerHand), maxHands))
       if (sellHands > 0) {
-        action = 'sell'
-        actHands = sellHands
-        actPrincipal = +(sellHands * handPrice).toFixed(2)
-        fee = +Math.max(5, (actPrincipal * sellFeeRate.value) / 100).toFixed(2)
+        d.action = 'sell'
+        d.actHands = sellHands
+        d.actPrincipal = +(sellHands * handPrice).toFixed(2)
+        d.fee = +Math.max(5, (d.actPrincipal * sellFeeRate.value) / 100).toFixed(2)
       }
     }
-    return { ...r, action, actHands, actPrincipal, fee, targetMV }
+    return d
   })
 
-  const sellProceeds = items.reduce((s, r) => s + (r.action === 'sell' ? r.actPrincipal : 0), 0)
-  let buyCost = items.reduce((s, r) => s + (r.action === 'buy' ? r.actPrincipal : 0), 0)
-  const buyRows = items.filter((r) => r.action === 'buy')
-  const sellFee = items.reduce((s, r) => s + (r.action === 'sell' ? r.fee : 0), 0)
-  const available = cashCurrent.value + budget.value + sellProceeds - sellFee
+  // 2) 现金池与可用于买入的额度（现金先保住目标比例）
+  const sellProceeds = derived.reduce((s, d) => s + (d.action === 'sell' ? d.actPrincipal : 0), 0)
+  const sellFee = derived.reduce((s, d) => s + (d.action === 'sell' ? d.fee : 0), 0)
+  const pool = cashCurrent.value + budget.value + sellProceeds - sellFee
+  const availableForBuy = pool - cashTargetValue
 
-  if (available < 0) {
-    // 现金池为负：不能买入，清空所有买入
-    buyRows.forEach((r) => {
-      r.action = 'hold'
-      r.actHands = 0
-      r.actPrincipal = 0
-      r.fee = 0
-    })
-  } else if (buyRows.length) {
-    let buyFee = buyRows.reduce((s, r) => s + r.fee, 0)
-    if (buyCost + buyFee > available) {
-      const scale = available / (buyCost + buyFee)
-      buyRows.forEach((r) => {
-        const newHands = Math.floor(r.actHands * scale)
-        r.actHands = newHands
-        r.actPrincipal = newHands * r.handPrice
-        r.fee = newHands > 0 ? +Math.max(5, (r.actPrincipal * buyFeeRate.value) / 100).toFixed(2) : 0
-        if (!newHands) r.action = 'hold'
-      })
-    }
+  // 3) 低配基金买入，额度受 availableForBuy 限制（按缺口比例分配）
+  const under = derived.filter((d) => d.diff > 0 && d.price)
+  const totalShortfall = under.reduce((s, d) => s + d.diff, 0)
+  let buyScale = 1
+  if (availableForBuy <= 0) {
+    buyScale = 0 // 现金已低于目标，不买入
+  } else if (totalShortfall > 0) {
+    const principalCap = Math.max(0, availableForBuy - under.length * 5) // 本金上限 = 可用 − 手续费底线
+    if (totalShortfall > principalCap) buyScale = principalCap / totalShortfall
   }
+  under.forEach((d) => {
+    const alloc = d.diff * buyScale
+    const buyHands = d.handPrice ? Math.floor(alloc / d.handPrice) : 0
+    if (buyHands > 0) {
+      d.action = 'buy'
+      d.actHands = buyHands
+      d.actPrincipal = +(buyHands * d.handPrice).toFixed(2)
+      d.fee = +Math.max(5, (d.actPrincipal * buyFeeRate.value) / 100).toFixed(2)
+    }
+  })
 
-  const finalSell = items.reduce((s, r) => s + (r.action === 'sell' ? r.actPrincipal : 0), 0)
-  const finalBuy = items.reduce((s, r) => s + (r.action === 'buy' ? r.actPrincipal : 0), 0)
-  const finalFee = items.reduce((s, r) => s + r.fee, 0)
-  const cashAfter = cashCurrent.value + budget.value + finalSell - finalBuy - finalFee
+  const finalSell = derived.reduce((s, d) => s + (d.action === 'sell' ? d.actPrincipal : 0), 0)
+  const finalBuy = derived.reduce((s, d) => s + (d.action === 'buy' ? d.actPrincipal : 0), 0)
+  const finalFee = derived.reduce((s, d) => s + d.fee, 0)
+  const cashAfter = pool - finalBuy - (derived.reduce((s, d) => s + (d.action === 'buy' ? d.fee : 0), 0))
+  const totalAfter = finalTotal - finalFee
+  const cashPct = totalAfter > 0 ? (cashAfter / totalAfter) * 100 : null
 
-  return { items, currentTotal, finalTotal, sellProceeds: finalSell, buyCost: finalBuy, totalFee: finalFee, cashAfter }
+  // 4) 回写源行，供模板读取（滑块 v-model 直接作用在源行 targetPct 上驱动重算）
+  derived.forEach((d) => {
+    const r = d.row
+    r.targetMV = d.targetMV
+    r.diff = d.diff
+    r.action = d.action
+    r.actHands = d.actHands
+    r.actPrincipal = d.actPrincipal
+    r.fee = d.fee
+  })
+
+  return {
+    items: rows, // 源行，滑块 v-model 直接作用其上，驱动重算
+    currentTotal,
+    finalTotal,
+    totalAfter,
+    sellProceeds: finalSell,
+    buyCost: finalBuy,
+    totalFee: finalFee,
+    cashAfter,
+    cashPct,
+    cashTargetPct,
+  }
 })
 
 const hasAction = computed(() => plan.value.items.some((r) => r.action !== 'hold'))
@@ -447,6 +482,7 @@ onMounted(async () => {
         fund_code: f.fund_code,
         fund_name: f.fund_name,
         target_ratio: f.target_ratio != null ? Number(f.target_ratio) : null,
+        targetPct: f.target_ratio != null ? Number(f.target_ratio) : 0, // 滑块目标，默认=规定比例
         price: null,
         handPrice: null,
         shares: Number(s.total_shares || 0),
@@ -500,6 +536,11 @@ onMounted(async () => {
   font-size: 20px;
   font-weight: 600;
 }
+.stat-sub {
+  color: #909399;
+  font-size: 12px;
+  margin-top: 4px;
+}
 .fee-hint {
   color: #c0c4cc;
   font-size: 11px;
@@ -530,6 +571,21 @@ onMounted(async () => {
 }
 .target-pct {
   color: #909399;
+}
+.slider-cell {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.slider {
+  flex: 1;
+}
+.pct-text {
+  width: 44px;
+  text-align: right;
+  color: #606266;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
 }
 .sell-amt {
   color: #67c23a;

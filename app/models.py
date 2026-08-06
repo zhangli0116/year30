@@ -2,7 +2,7 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import Optional
 
-from sqlalchemy import Date, DateTime, ForeignKey, Integer, Numeric, String, func
+from sqlalchemy import BigInteger, Date, DateTime, ForeignKey, Integer, Numeric, String, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
@@ -29,6 +29,70 @@ class Fund(Base):
         back_populates="fund",
         # 不在 ORM 层级联删除：有记录的基金删除由业务层拦截（与数据库 FK RESTRICT 一致）
     )
+
+
+class FundHoldingDaily(Base):
+    """基金每日权益流水：按天累计持有份额 × 当日收盘价。"""
+
+    __tablename__ = "fund_holding_daily"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    fund_id: Mapped[int] = mapped_column(
+        ForeignKey("fund.id", onupdate="CASCADE", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+        comment="基金ID",
+    )
+    trade_date: Mapped[date] = mapped_column(Date, nullable=False, comment="交易日")
+    total_shares: Mapped[int] = mapped_column(Integer, nullable=False, comment="当日累计持有份数")
+    total_hands: Mapped[int] = mapped_column(Integer, nullable=False, comment="当日累计手数")
+    price: Mapped[Decimal] = mapped_column(Numeric(10, 4), nullable=False, comment="当日收盘价")
+    equity_amount: Mapped[Decimal] = mapped_column(Numeric(14, 2), nullable=False, comment="当日权益金额")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, server_default=func.now(), comment="记录创建时间"
+    )
+
+    fund: Mapped[Fund] = relationship()
+
+
+class FundCashDaily(Base):
+    """每日现金流量表：按日历日累计现金余额。"""
+
+    __tablename__ = "fund_cash_daily"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    trade_date: Mapped[date] = mapped_column(Date, unique=True, nullable=False, comment="日期")
+    increment: Mapped[Decimal] = mapped_column(Numeric(14, 2), nullable=False, default=0, comment="当日现金增量")
+    cash_amount: Mapped[Decimal] = mapped_column(Numeric(14, 2), nullable=False, default=0, comment="当日累计现金余额")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, server_default=func.now(), comment="记录创建时间"
+    )
+
+
+class FundPrice(Base):
+    """基金历史日线价格（OHLC），对应 fund_price 表。"""
+
+    __tablename__ = "fund_price"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    fund_id: Mapped[int] = mapped_column(
+        ForeignKey("fund.id", onupdate="CASCADE", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+        comment="基金ID",
+    )
+    trade_date: Mapped[date] = mapped_column(Date, nullable=False, comment="交易日")
+    open_price: Mapped[Optional[Decimal]] = mapped_column(Numeric(10, 4), nullable=True, comment="开盘价")
+    high_price: Mapped[Optional[Decimal]] = mapped_column(Numeric(10, 4), nullable=True, comment="最高价")
+    low_price: Mapped[Optional[Decimal]] = mapped_column(Numeric(10, 4), nullable=True, comment="最低价")
+    close_price: Mapped[Decimal] = mapped_column(Numeric(10, 4), nullable=False, comment="收盘价")
+    volume: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True, comment="成交量")
+    source: Mapped[str] = mapped_column(String(16), nullable=False, default="tencent", comment="数据源")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, server_default=func.now(), comment="记录创建时间"
+    )
+
+    fund: Mapped[Fund] = relationship()
 
 
 class Quarter(Base):

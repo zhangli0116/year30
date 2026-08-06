@@ -72,6 +72,60 @@ CREATE TABLE purchase_record (
 ) ENGINE = InnoDB COMMENT = '指数基金购买记录';
 
 -- --------------------------------------------------
+-- 表 4：基金历史日线价格（OHLC），供趋势图/K线图与市值估算
+-- --------------------------------------------------
+CREATE TABLE fund_price (
+    id           INT UNSIGNED   NOT NULL AUTO_INCREMENT COMMENT '主键ID',
+    fund_id      INT UNSIGNED   NOT NULL COMMENT '基金ID -> fund.id',
+    trade_date   DATE           NOT NULL COMMENT '交易日',
+    open_price   DECIMAL(10,4)  NULL COMMENT '开盘价',
+    high_price   DECIMAL(10,4)  NULL COMMENT '最高价',
+    low_price    DECIMAL(10,4)  NULL COMMENT '最低价',
+    close_price  DECIMAL(10,4)  NOT NULL COMMENT '收盘价',
+    volume       BIGINT         NULL COMMENT '成交量',
+    source       VARCHAR(16)    NOT NULL DEFAULT 'tencent' COMMENT '数据源',
+    created_at   DATETIME       NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '记录创建时间',
+    PRIMARY KEY (id),
+    UNIQUE KEY uk_fund_date (fund_id, trade_date),
+    KEY idx_trade_date (trade_date),
+    CONSTRAINT fk_price_fund FOREIGN KEY (fund_id) REFERENCES fund (id)
+        ON UPDATE CASCADE ON DELETE CASCADE
+) ENGINE = InnoDB COMMENT = '基金历史日线价格';
+
+-- --------------------------------------------------
+-- 表 5：基金每日权益流水（按天累计持有份额 × 当日收盘价）
+-- --------------------------------------------------
+CREATE TABLE fund_holding_daily (
+    id            INT UNSIGNED   NOT NULL AUTO_INCREMENT COMMENT '主键ID',
+    fund_id       INT UNSIGNED   NOT NULL COMMENT '基金ID -> fund.id',
+    trade_date    DATE           NOT NULL COMMENT '交易日',
+    total_shares  INT UNSIGNED   NOT NULL COMMENT '当日累计持有份数（买+卖-）',
+    total_hands   INT UNSIGNED   NOT NULL COMMENT '当日累计手数（=份数/100）',
+    price         DECIMAL(10,4)  NOT NULL COMMENT '当日收盘价',
+    equity_amount DECIMAL(14,2)  NOT NULL COMMENT '当日权益金额 = 份数 × 价格',
+    created_at    DATETIME       NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '记录创建时间',
+    PRIMARY KEY (id),
+    UNIQUE KEY uk_fund_date (fund_id, trade_date),
+    KEY idx_fund (fund_id),
+    CONSTRAINT fk_holding_fund FOREIGN KEY (fund_id) REFERENCES fund (id)
+        ON UPDATE CASCADE ON DELETE CASCADE
+) ENGINE = InnoDB COMMENT = '基金每日权益流水';
+
+-- --------------------------------------------------
+-- 表 6：每日现金流量表（日历日累计现金余额）
+-- 增量 = 季度预算入账(+budget) − 买入支出(−buy total_amount，含费) + 卖出回笼(+sell total_amount) − 卖出手续费(−sell fee)
+-- --------------------------------------------------
+CREATE TABLE fund_cash_daily (
+    id          INT UNSIGNED   NOT NULL AUTO_INCREMENT COMMENT '主键ID',
+    trade_date  DATE           NOT NULL COMMENT '日期（日历日，含周末）',
+    increment   DECIMAL(14,2)  NOT NULL DEFAULT 0.00 COMMENT '当日现金增量',
+    cash_amount DECIMAL(14,2)  NOT NULL DEFAULT 0.00 COMMENT '当日累计现金余额',
+    created_at  DATETIME       NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '记录创建时间',
+    PRIMARY KEY (id),
+    UNIQUE KEY uk_date (trade_date)
+) ENGINE = InnoDB COMMENT = '每日现金流量表';
+
+-- --------------------------------------------------
 -- 示例数据
 -- --------------------------------------------------
 INSERT INTO fund (fund_code, fund_name, exchange) VALUES

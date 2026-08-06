@@ -15,6 +15,18 @@
           <el-icon><List /></el-icon>
           <span>购买记录</span>
         </el-menu-item>
+        <el-menu-item index="/prices">
+          <el-icon><TrendCharts /></el-icon>
+          <span>基金价格</span>
+        </el-menu-item>
+        <el-menu-item index="/holdings">
+          <el-icon><Money /></el-icon>
+          <span>每日权益流水</span>
+        </el-menu-item>
+        <el-menu-item index="/cash">
+          <el-icon><Wallet /></el-icon>
+          <span>每日现金流量</span>
+        </el-menu-item>
         <el-menu-item index="/calculator">
           <el-icon><Operation /></el-icon>
           <span>季度计算器</span>

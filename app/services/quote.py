@@ -17,6 +17,8 @@ import re
 import urllib.request
 from datetime import datetime
 
+from app.logger import logger
+
 _QUOTE_URL = "https://qt.gtimg.cn/q={codes}"
 
 _LINE_RE = re.compile(r'^v_(\w+)="(.*)"\s*;?\s*$')
@@ -51,8 +53,9 @@ def fetch_quotes(codes: list[str], timeout: int = 8) -> list[dict]:
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             raw = resp.read()
-    except Exception:
+    except Exception as e:  # noqa: BLE001
         # 网络异常/超时时返回空，由调用方决定如何提示
+        logger.warning(f"拉取实时行情失败 codes={codes}：{e}")
         return []
 
     text = raw.decode("gbk", errors="ignore")
@@ -78,6 +81,7 @@ def fetch_quotes(codes: list[str], timeout: int = 8) -> list[dict]:
                 "time": _format_time(parts[30]),
             }
         )
+    logger.debug(f"拉取实时行情成功 codes={codes}，返回 {len(quotes)} 条")
     return quotes
 
 

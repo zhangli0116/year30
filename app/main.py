@@ -6,7 +6,11 @@ from fastapi.middleware.cors import CORSMiddleware
 from app import models  # noqa: F401  确保模型注册到 Base.metadata
 from app.config import settings
 from app.database import Base, engine
+from app.logger import LOG_DIR, logger
+from app.routers import cash as cash_router
 from app.routers import fund as fund_router
+from app.routers import holding as holding_router
+from app.routers import price as price_router
 from app.routers import purchase as purchase_router
 from app.routers import quarter as quarter_router
 from app.routers import quote as quote_router
@@ -17,6 +21,7 @@ from app.schemas import ApiResponse, success
 async def lifespan(_: FastAPI):
     # 仅补建缺失的表，不会改动已有表结构（表结构由 schema.sql 管理）
     Base.metadata.create_all(bind=engine)
+    logger.info(f"数据库表检查完成（日志目录：{LOG_DIR}）")
     yield
 
 
@@ -41,7 +46,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+app.include_router(cash_router.router)
 app.include_router(fund_router.router)
+app.include_router(holding_router.router)
+app.include_router(price_router.router)
 app.include_router(purchase_router.router)
 app.include_router(quarter_router.router)
 app.include_router(quote_router.router)

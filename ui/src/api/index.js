@@ -51,6 +51,37 @@ export const quotesApi = {
   list: (codes) => request.get('/quotes', { params: { codes } }),
 }
 
+export const pricesApi = {
+  // GET /api/v1/prices/sources  可选数据源
+  sources: () => request.get('/prices/sources'),
+  // GET /api/v1/prices?fund_id=&start_date=&end_date=
+  list: (params) => request.get('/prices', { params }),
+  // POST /api/v1/prices/check  {fund_id, start_date, end_date, source}  确认缺失时间段
+  check: (data) => request.post('/prices/check', data),
+  // POST /api/v1/prices/sync  {fund_id, start_date, end_date, source}
+  sync: (data) => request.post('/prices/sync', data),
+}
+
+export const cashApi = {
+  // GET /api/v1/cash?start_date=&end_date=
+  list: (params) => request.get('/cash', { params }),
+  // POST /api/v1/cash/check  {start_date, end_date}
+  check: (data) => request.post('/cash/check', data),
+  // POST /api/v1/cash/generate  {start_date, end_date}
+  generate: (data) => request.post('/cash/generate', data),
+}
+
+export const holdingsApi = {
+  // GET /api/v1/holdings?fund_id=&start_date=&end_date=
+  list: (params) => request.get('/holdings', { params }),
+  // GET /api/v1/holdings/total?start_date=&end_date=  全部基金按日求和
+  total: (params) => request.get('/holdings/total', { params }),
+  // POST /api/v1/holdings/check  {fund_id, start_date, end_date}
+  check: (data) => request.post('/holdings/check', data),
+  // POST /api/v1/holdings/generate  {fund_id, start_date, end_date}
+  generate: (data) => request.post('/holdings/generate', data),
+}
+
 export const quartersApi = {
   // GET /api/v1/quarters
   list: () => request.get('/quarters'),
