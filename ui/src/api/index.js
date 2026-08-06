@@ -107,7 +107,8 @@ export const syncApi = {
 
 export const rebalanceApi = {
   // GET /api/v1/rebalance/check → {params, total, funds:[...], cash}
-  check: () => request.get('/rebalance/check'),
+  // 可选传 r_band/min_abs/max_abs/amount_floor 临时覆盖参数做预览（不落库）
+  check: (params) => request.get('/rebalance/check', { params }),
   // GET /api/v1/rebalance/params → 判定参数
   getParams: () => request.get('/rebalance/params'),
   // PUT /api/v1/rebalance/params {r_band?, min_abs?, max_abs?, amount_floor?}

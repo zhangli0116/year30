@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
 from app import schemas
@@ -10,9 +10,30 @@ router = APIRouter(prefix="/api/v1/rebalance", tags=["rebalance"])
 
 
 @router.get("/check", response_model=ApiResponse[schemas.RebalanceOut])
-def rebalance_check(db: Session = Depends(get_db)) -> ApiResponse:
-    """再平衡体检：各基金目标/当前占比/偏离/阈值 + 现金行（判定由前端统一做）。"""
-    return success(schemas.RebalanceOut(**rebalance_service.analyze(db)))
+def rebalance_check(
+    r_band: float | None = Query(None),
+    min_abs: float | None = Query(None),
+    max_abs: float | None = Query(None),
+    amount_floor: float | None = Query(None),
+    db: Session = Depends(get_db),
+) -> ApiResponse:
+    """再平衡体检：各基金目标/当前占比/偏离/阈值/状态/建议动作 + 现金行。
+
+    可传 r_band/min_abs/max_abs/amount_floor 临时覆盖参数做预览（不落库）。
+    """
+    overrides = {
+        k: v
+        for k, v in {
+            "r_band": r_band,
+            "min_abs": min_abs,
+            "max_abs": max_abs,
+            "amount_floor": amount_floor,
+        }.items()
+        if v is not None
+    }
+    params = rebalance_service.get_params(db)
+    params.update(overrides)
+    return success(schemas.RebalanceOut(**rebalance_service.analyze(db, params=params)))
 
 
 @router.get("/params", response_model=ApiResponse[schemas.RebalanceParams])

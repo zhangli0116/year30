@@ -52,6 +52,13 @@
         </div>
       </template>
 
+      <div class="rb-note">
+        判定说明：阈值 = clamp(目标% × R, 底线, 上限)。
+        <b>「偏离」列</b>：上行为<em>绝对偏离</em>（百分点 = 当前占比 − 目标占比），下行为<em>相对偏离</em>（= |偏离| ÷ 目标，相对自身目标真实跑偏幅度）；
+        <b>「阈值」列</b>：上行为绝对阈值，下行标注其相对目标的比例（= R）或触底线/上限。
+        同一绝对偏离，目标越小相对幅度越大。
+      </div>
+
       <el-table :data="rows" v-loading="loading" stripe>
         <el-table-column label="基金" min-width="150">
           <template #default="{ row }">
@@ -70,15 +77,34 @@
         <el-table-column label="当前" width="90" align="right">
           <template #default="{ row }">{{ row.real.toFixed(2) + '%' }}</template>
         </el-table-column>
-        <el-table-column label="偏离" width="90" align="right">
+        <el-table-column label="偏离" width="120" align="right">
           <template #default="{ row }">
-            <span :class="row.status === 'normal' ? 'muted' : row.status === 'above' ? 'up' : 'down'">
-              {{ signedPct(row.deviation) }}
-            </span>
+            <div class="two-line">
+              <span
+                class="main"
+                :class="row.status === 'normal' ? 'muted' : row.status === 'above' ? 'up' : 'down'"
+                :title="'绝对偏离（百分点）= 当前占比 − 目标占比'"
+              >
+                {{ signedPct(row.deviation) }}
+              </span>
+              <span class="sub" :title="'相对偏离 = |偏离| ÷ 目标：该基金相对自身目标比例的真实跑偏幅度'">
+                相对 {{ relDev(row) }}
+              </span>
+            </div>
           </template>
         </el-table-column>
-        <el-table-column label="阈值" width="90" align="right">
-          <template #default="{ row }">{{ row.threshold == null ? '-' : '±' + row.threshold.toFixed(2) + '%' }}</template>
+        <el-table-column label="阈值" width="130" align="right">
+          <template #default="{ row }">
+            <div v-if="row.threshold != null" class="two-line">
+              <span class="main" :title="'阈值 = clamp(目标% × R, 底线, 上限)，超出才提示'">
+                ±{{ row.threshold.toFixed(2) }}%
+              </span>
+              <span class="sub" :title="'阈值相对目标的比例 = 阈值 ÷ 目标；触底线/上限时小于 R'">
+                {{ thresholdRel(row) }}
+              </span>
+            </div>
+            <span v-else>-</span>
+          </template>
         </el-table-column>
         <el-table-column label="偏离金额" width="120" align="right">
           <template #default="{ row }">{{ signedMoney(row.deviation_amount) }}</template>
@@ -90,7 +116,7 @@
         </el-table-column>
         <el-table-column label="建议动作" min-width="190">
           <template #default="{ row }">
-            <span :class="row.status === 'normal' ? 'muted' : ''">{{ suggestion(row) }}</span>
+            <span :class="row.status === 'normal' ? 'muted' : ''">{{ row.suggestion }}</span>
           </template>
         </el-table-column>
       </el-table>
@@ -101,11 +127,10 @@
 </template>
 
 <script setup>
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { rebalanceApi } from '../api'
-import { judge } from '../utils/rebalance'
 
 const router = useRouter()
 const DEFAULTS = { r_band: 15, min_abs: 1, max_abs: 3, amount_floor: 300 }
@@ -115,28 +140,13 @@ const saving = ref(false)
 const data = ref(null) // {params, total, funds, cash}
 const cfg = reactive({ ...DEFAULTS })
 
-// 分析行：用「表单里的参数」实时预览判定（保存后才写库）
+// 分析行：status 与 suggestion 由后端统一计算（前端只展示）
 const rows = computed(() => {
   if (!data.value) return []
-  const params = { ...cfg }
-  const fundRows = (data.value.funds || []).map((f) => ({
-    ...f,
-    status: judge(f.deviation, f.threshold, params, f.deviation_amount),
-  }))
+  const fundRows = (data.value.funds || []).map((f) => ({ ...f }))
   const c = data.value.cash
   if (c) {
-    fundRows.push({
-      fund_id: -1,
-      fund_code: '000000',
-      fund_name: '现金',
-      price: null,
-      target: c.target,
-      real: c.real,
-      deviation: c.deviation,
-      deviation_amount: c.deviation_amount,
-      threshold: c.threshold,
-      status: judge(c.deviation, c.threshold, params, c.deviation_amount),
-    })
+    fundRows.push({ ...c, fund_id: -1, fund_code: '000000', fund_name: '现金', price: null })
   }
   return fundRows
 })
@@ -146,11 +156,36 @@ const deviatingCount = computed(
   () => rows.value.filter((r) => r.status !== 'normal').length
 )
 
+let loadedKey = null // 最近一次生效的参数快照，用于预览去重
+
+// 初始/刷新：取保存参数 + 分析结果
 async function load() {
   loading.value = true
   try {
-    data.value = await rebalanceApi.check()
-    Object.assign(cfg, data.value.params)
+    const d = await rebalanceApi.check()
+    data.value = d
+    loadedKey = JSON.stringify(d.params)
+    Object.assign(cfg, d.params)
+  } catch {
+    // 拦截器已提示
+  } finally {
+    loading.value = false
+  }
+}
+
+// 参数变化时用「未保存的参数」向后端做预览（后端统一判定，不落库）
+let previewTimer = null
+watch(cfg, () => {
+  clearTimeout(previewTimer)
+  previewTimer = setTimeout(preview, 300)
+}, { deep: true })
+
+async function preview() {
+  const key = JSON.stringify({ ...cfg })
+  if (key === loadedKey) return // 与生效参数一致，无需刷新
+  loading.value = true
+  try {
+    data.value = await rebalanceApi.check({ ...cfg })
   } catch {
     // 拦截器已提示
   } finally {
@@ -193,21 +228,19 @@ function tagText(row) {
   return '达标'
 }
 
-function suggestion(row) {
-  if (row.status === 'normal' || row.target == null) return '—'
-  const total = data.value.total
-  const gap = ((Number(row.target) - Number(row.real)) / 100) * total // 正=需加仓
-  const absGap = Math.abs(gap)
-  // 现金行特殊语义
-  if (row.fund_code === '000000') {
-    return gap > 0 ? '现金偏低，可减少基金买入' : '现金偏多，可加仓低配基金'
-  }
-  const handPrice = row.price ? Number(row.price) * 100 : 0
-  const hands = handPrice > 0 ? Math.floor(absGap / handPrice) : 0
-  const action = gap > 0 ? '加仓' : '减仓'
-  return hands > 0
-    ? `建议${action}约 ${hands} 手（¥${absGap.toFixed(0)}）`
-    : `建议${action}约 ¥${absGap.toFixed(0)}`
+// 相对幅度：|偏离| ÷ 目标（相对自身目标的真实跑偏幅度）
+function relDev(row) {
+  if (row.target == null || !row.target) return '-'
+  return (Math.abs(row.deviation) / row.target * 100).toFixed(1) + '%'
+}
+// 阈值来源：用「未钳制的自然阈值」(目标×R) 严格判断是否真被底线/上限改变；
+// 只有真的被压/被抬的才标"触上限/触底线"，否则统一显示相对目标比例（= R）
+function thresholdRel(row) {
+  if (row.threshold == null || row.target == null) return '-'
+  const raw = (row.target * cfg.r_band) / 100 // 自然阈值（未钳制）
+  if (raw > cfg.max_abs) return `触上限 ${cfg.max_abs}%` // 被上限压到 max_abs
+  if (raw < cfg.min_abs) return `触底线 ${cfg.min_abs}%` // 被底线抬到 min_abs
+  return '相对目标 ' + (row.threshold / row.target * 100).toFixed(1) + '%'
 }
 
 function signedPct(v) {
@@ -290,6 +323,31 @@ onMounted(load)
 }
 .muted {
   color: #c0c4cc;
+}
+.rb-note {
+  color: #909399;
+  font-size: 12px;
+  margin-bottom: 10px;
+  line-height: 1.6;
+}
+.rb-note em {
+  color: #606266;
+  font-style: normal;
+  font-weight: 600;
+}
+.two-line {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  line-height: 1.4;
+}
+.two-line .main {
+  font-variant-numeric: tabular-nums;
+}
+.two-line .sub {
+  color: #c0c4cc;
+  font-size: 12px;
+  white-space: nowrap;
 }
 .empty-tip {
   color: #909399;

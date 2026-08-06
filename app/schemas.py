@@ -421,6 +421,8 @@ class RebalanceFundOut(BaseModel):
     deviation: float  # 偏离(百分点)
     deviation_amount: float  # 偏离金额(元)
     threshold: Optional[float] = None  # 判定阈值(%)，未设目标时 None
+    status: str = "normal"  # above / below / normal（后端统一判定）
+    suggestion: str = "—"  # 建议动作文本（后端计算）
 
 
 class RebalanceCashOut(BaseModel):
@@ -429,6 +431,8 @@ class RebalanceCashOut(BaseModel):
     deviation: float
     deviation_amount: float
     threshold: float
+    status: str = "normal"
+    suggestion: str = "—"
 
 
 class RebalanceOut(BaseModel):

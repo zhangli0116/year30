@@ -86,14 +86,35 @@ def _prices_for_funds(db: Session, codes: list[str]) -> dict[str, float]:
     return _price_map(db, codes) if codes else {}
 
 
-def analyze(db: Session) -> dict:
-    """再平衡体检分析：每只基金的目标/当前占比/偏离/偏离金额/阈值 + 现金行。
+def suggest(row: dict, total: float) -> str:
+    """建议动作：低配→加仓、超配→减仓；现金行特殊。
 
-    只计算偏离与阈值，不做状态判定——判定由前端共享模块统一做。
+    gap = (目标 − 当前) / 100 × 总市值，正数=需加仓、负数=需减仓。
+    """
+    if row.get("status") == "normal" or row.get("target") is None:
+        return "—"
+    gap = (row["target"] - row["real"]) / 100 * total
+    abs_gap = abs(gap)
+    if row.get("fund_code") == "000000":
+        return "现金偏低，可减少基金买入" if gap > 0 else "现金偏多，可加仓低配基金"
+    price = row.get("price")
+    hand_price = (price * 100) if price else 0
+    action = "加仓" if gap > 0 else "减仓"
+    if hand_price > 0:
+        hands = int(abs_gap // hand_price)
+        if hands > 0:
+            return f"建议{action}约 {hands} 手（¥{abs_gap:.0f}）"
+    return f"建议{action}约 ¥{abs_gap:.0f}"
+
+
+def analyze(db: Session, params: dict | None = None) -> dict:
+    """再平衡体检分析：每只基金的目标/当前占比/偏离/偏离金额/阈值/状态/建议动作 + 现金行。
+
+    状态与建议动作都在后端统一计算（单一来源，便于后续接入大模型分析）。
     """
     from app.services.xirr import _funds_with_shares
 
-    params = get_params(db)
+    params = params if params is not None else get_params(db)
     funds = [f for f in crud.fund.list_funds(db, 1, 100)[0] if f.fund_code != "000000"]
     target_map = {
         f.id: float(f.target_ratio) if f.target_ratio is not None else None
@@ -126,23 +147,26 @@ def analyze(db: Session) -> dict:
         target = target_map.get(f["fund_id"])
         real = (mvs[f["fund_id"]] / total * 100) if total > 0 else 0.0
         deviation = real - target if target is not None else 0.0
-        fund_rows.append(
-            {
-                "fund_id": f["fund_id"],
-                "fund_code": f["fund_code"],
-                "fund_name": f["fund_name"],
-                "price": prices.get(f["fund_code"]),
-                "target": round(target, 2) if target is not None else None,
-                "real": round(real, 2),
-                "deviation": round(deviation, 2),
-                "deviation_amount": round(deviation / 100 * total, 2),
-                "threshold": (
-                    round(threshold_for(target, params), 2)
-                    if target is not None
-                    else None
-                ),
-            }
+        row = {
+            "fund_id": f["fund_id"],
+            "fund_code": f["fund_code"],
+            "fund_name": f["fund_name"],
+            "price": prices.get(f["fund_code"]),
+            "target": round(target, 2) if target is not None else None,
+            "real": round(real, 2),
+            "deviation": round(deviation, 2),
+            "deviation_amount": round(deviation / 100 * total, 2),
+            "threshold": (
+                round(threshold_for(target, params), 2) if target is not None else None
+            ),
+        }
+        row["status"] = (
+            judge(deviation, row["threshold"], params["amount_floor"], row["deviation_amount"])
+            if row["threshold"] is not None
+            else "normal"
         )
+        row["suggestion"] = suggest(row, total)
+        fund_rows.append(row)
 
     cash_real = (cash / total * 100) if total > 0 else 0.0
     cash_deviation = cash_real - cash_target
@@ -153,6 +177,10 @@ def analyze(db: Session) -> dict:
         "deviation_amount": round(cash_deviation / 100 * total, 2),
         "threshold": round(threshold_for(cash_target, params), 2),
     }
+    cash_row["status"] = judge(
+        cash_deviation, cash_row["threshold"], params["amount_floor"], cash_row["deviation_amount"]
+    )
+    cash_row["suggestion"] = suggest({**cash_row, "fund_code": "000000"}, total)
 
     return {
         "params": params,
