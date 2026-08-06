@@ -1,0 +1,15 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+
+# 配置文件
+.env
+
+# 前端
+ui/node_modules/
+ui/dist/
+
+# IDE
+.idea/
+.vscode/

@@ -1,0 +1,13 @@
+[project]
+name = "year30"
+version = "0.1.0"
+description = "指数基金定投记录：FastAPI + SQLAlchemy 后端服务"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.141",
+    "uvicorn[standard]>=0.52",
+    "sqlalchemy>=2.0",
+    "pymysql>=1.2",
+    "pydantic-settings>=2.14",
+    "python-dotenv>=1.2",
+]
