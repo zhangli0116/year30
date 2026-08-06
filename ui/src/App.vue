@@ -29,7 +29,7 @@
         </el-menu-item>
         <el-menu-item index="/calculator">
           <el-icon><Operation /></el-icon>
-          <span>季度计算器</span>
+          <span>定投计算器</span>
         </el-menu-item>
         <el-menu-item index="/rebalance">
           <el-icon><RefreshLeft /></el-icon>

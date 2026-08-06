@@ -20,7 +20,7 @@ const router = createRouter({
     { path: '/holdings', name: 'holdings', component: Holdings, meta: { title: '每日权益流水' } },
     { path: '/cash', name: 'cash', component: Cash, meta: { title: '每日现金流量' } },
     { path: '/purchases', name: 'purchases', component: Purchases, meta: { title: '购买记录' } },
-    { path: '/calculator', name: 'calculator', component: Calculator, meta: { title: '季度计算器' } },
+    { path: '/calculator', name: 'calculator', component: Calculator, meta: { title: '定投计算器' } },
     { path: '/rebalance', name: 'rebalance', component: Rebalance, meta: { title: '卖出式再平衡' } },
     { path: '/rebalance-check', name: 'rebalance-check', component: RebalanceCheck, meta: { title: '再平衡体检' } },
   ],

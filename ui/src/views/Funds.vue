@@ -153,125 +153,95 @@
     <el-dialog
       v-model="planDialogVisible"
       :title="planIsEdit ? '编辑方案' : '新建方案'"
-      width="640px"
+      width="720px"
       :close-on-click-modal="false"
     >
-      <el-form ref="planFormRef" :model="planForm" :rules="planRules" label-width="100px">
-        <el-row :gutter="12">
-          <el-col :span="12">
-            <el-form-item label="方案名称" prop="name">
-              <el-input v-model="planForm.name" placeholder="如 沪深300+纳指组合" />
-            </el-form-item>
-          </el-col>
-          <el-col :span="12">
-            <el-form-item label="每次金额" prop="amount">
-              <el-input-number
-                v-model="planForm.amount"
-                :min="0"
-                :step="100"
-                :precision="2"
-                :controls="false"
-                style="width: 100%"
-              />
-            </el-form-item>
-          </el-col>
-        </el-row>
-        <el-row :gutter="12">
-          <el-col :span="8">
-            <el-form-item label="起始日期" prop="start_date">
-              <el-date-picker
-                v-model="planForm.start_date"
-                type="date"
-                value-format="YYYY-MM-DD"
-                placeholder="首次定投日期"
-                style="width: 100%"
-              />
-            </el-form-item>
-          </el-col>
-          <el-col :span="8">
-            <el-form-item label="间隔天数" prop="interval_days">
-              <el-input-number
-                v-model="planForm.interval_days"
-                :min="1"
-                :step="1"
-                :controls="false"
-                style="width: 100%"
-              />
-            </el-form-item>
-          </el-col>
-          <el-col :span="8">
-            <el-form-item label="容错天数" prop="tolerance_days">
-              <el-input-number
-                v-model="planForm.tolerance_days"
-                :min="0"
-                :step="1"
-                :controls="false"
-                style="width: 100%"
-              />
-              <div class="field-tip">下次窗口 = 起始 + 间隔 ± 容错</div>
-            </el-form-item>
-          </el-col>
-        </el-row>
-        <el-row :gutter="12">
-          <el-col :span="8">
-            <el-form-item label="再平衡策略" prop="rebalance_strategy">
-              <el-select v-model="planForm.rebalance_strategy" style="width: 100%">
-                <el-option label="仅体检" value="check" />
-                <el-option label="买入式" value="buy" />
-                <el-option label="卖出式" value="sell" />
-              </el-select>
-            </el-form-item>
-          </el-col>
-          <el-col :span="8">
-            <el-form-item label="现金比例" prop="cash_ratio">
-              <el-input-number
-                v-model="planForm.cash_ratio"
-                :min="0"
-                :max="100"
-                :precision="2"
-                :controls="false"
-                style="width: 100%"
-              />
-            </el-form-item>
-          </el-col>
-        </el-row>
-        <el-form-item label="启用">
-          <el-switch v-model="planForm.active" />
-        </el-form-item>
-
-        <el-divider content-position="left">标的配置</el-divider>
-        <div class="fund-editor">
-          <div v-for="(pf, idx) in planForm.funds" :key="idx" class="fund-row">
-            <el-select
-              v-model="pf.fund_id"
-              placeholder="选择基金"
-              filterable
-              style="width: 220px"
-            >
-              <el-option
-                v-for="f in planFundOptions"
-                :key="f.id"
-                :label="`${f.fund_code} ${f.fund_name}`"
-                :value="f.id"
-              />
-            </el-select>
-            <el-input-number
-              v-model="pf.target_ratio"
-              :min="0"
-              :max="100"
-              :precision="2"
-              :controls="false"
-              style="width: 120px"
-              placeholder="目标占比%"
-            />
-            <el-button link type="danger" @click="removePlanFund(idx)">删除</el-button>
-          </div>
-          <el-button size="small" type="primary" plain @click="addPlanFund">
-            ＋ 添加基金
-          </el-button>
+      <el-form ref="planFormRef" :model="planForm" :rules="planRules" label-width="96px" class="plan-form">
+        <div class="form-section">
+          <div class="section-title">基本设置</div>
+          <el-row :gutter="16">
+            <el-col :span="12">
+              <el-form-item label="方案名称" prop="name">
+                <el-input v-model="planForm.name" placeholder="如 沪深300+纳指组合" />
+              </el-form-item>
+            </el-col>
+            <el-col :span="12">
+              <el-form-item label="每次金额" prop="amount">
+                <el-input-number v-model="planForm.amount" :min="0" :step="100" :precision="2" :controls="false" style="width: 100%" />
+              </el-form-item>
+            </el-col>
+          </el-row>
+          <el-row :gutter="16">
+            <el-col :span="8">
+              <el-form-item label="起始日期" prop="start_date">
+                <el-date-picker v-model="planForm.start_date" type="date" value-format="YYYY-MM-DD" placeholder="首次定投日期" style="width: 100%" />
+              </el-form-item>
+            </el-col>
+            <el-col :span="8">
+              <el-form-item label="间隔周期" prop="interval_days">
+                <el-select v-model="planForm.interval_days" style="width: 100%">
+                  <el-option v-for="o in intervalPresets" :key="o.value" :label="o.label" :value="o.value" />
+                  <el-option v-if="!intervalPresets.some((o) => o.value === planForm.interval_days)" :label="`自定义 ${planForm.interval_days} 天`" :value="planForm.interval_days" />
+                </el-select>
+              </el-form-item>
+            </el-col>
+            <el-col :span="8">
+              <el-form-item label="容错天数" prop="tolerance_days">
+                <el-input-number v-model="planForm.tolerance_days" :min="0" :step="1" :controls="false" style="width: 100%" />
+              </el-form-item>
+            </el-col>
+          </el-row>
+          <el-row :gutter="16">
+            <el-col :span="8">
+              <el-form-item label="再平衡策略" prop="rebalance_strategy">
+                <el-select v-model="planForm.rebalance_strategy" style="width: 100%">
+                  <el-option label="仅体检" value="check" />
+                  <el-option label="买入式" value="buy" />
+                  <el-option label="卖出式" value="sell" />
+                </el-select>
+              </el-form-item>
+            </el-col>
+            <el-col :span="8">
+              <el-form-item label="现金比例" prop="cash_ratio">
+                <el-input-number v-model="planForm.cash_ratio" :min="0" :max="100" :precision="2" :controls="false" style="width: 100%" />
+              </el-form-item>
+            </el-col>
+            <el-col :span="8">
+              <el-form-item label="启用">
+                <el-switch v-model="planForm.active" />
+              </el-form-item>
+            </el-col>
+          </el-row>
         </div>
-        <div class="ratio-tip">
-          Σ 标的占比 ＋ 现金比例 应等于 100%（当前标的 {{ planFundsSum }}% ＋ 现金 {{ planForm.cash_ratio == null ? 0 : Number(planForm.cash_ratio) }}%）
+
+        <div class="form-section">
+          <div class="section-title">标的配置 <span class="section-hint">Σ 标的 ＋ 现金 需等于 100%</span></div>
+          <div class="fund-editor">
+            <div class="fund-head">
+              <span style="flex: 1">基金</span>
+              <span style="width: 140px; text-align: right">目标占比</span>
+              <span class="col-op"></span>
+            </div>
+            <div v-for="(pf, idx) in planForm.funds" :key="idx" class="fund-row">
+              <el-select v-model="pf.fund_id" placeholder="选择基金" filterable style="flex: 1; min-width: 0">
+                <el-option v-for="f in planFundOptions" :key="f.id" :label="`${f.fund_code} ${f.fund_name}`" :value="f.id" />
+              </el-select>
+              <el-input-number v-model="pf.target_ratio" :min="0" :max="100" :precision="2" :controls="false" style="width: 140px" placeholder="占比%" />
+              <span class="col-op">
+                <el-button link type="danger" @click="removePlanFund(idx)">删除</el-button>
+              </span>
+            </div>
+            <el-button size="small" type="primary" plain @click="addPlanFund" class="add-fund-btn">＋ 添加基金</el-button>
+          </div>
+          <div class="ratio-block" :class="ratioOk ? 'ok' : 'warn'">
+            <div class="ratio-fill" :style="{ width: Math.min(100, ratioTotal) + '%' }"></div>
+          </div>
+          <div class="ratio-tip" :class="ratioOk ? 'ok' : 'warn'">
+            Σ 标的 <b>{{ planFundsSum }}%</b> ＋ 现金 <b>{{ cashRatioNum }}%</b> = <b>{{ ratioTotal }}%</b>
+            <span v-if="ratioOk" class="ratio-state ok">✓ 已配满</span>
+            <span v-else class="ratio-state warn">✗ 应等于 100%（差 {{ Math.abs(100 - ratioTotal).toFixed(1) }}%）</span>
+          </div>
+          <div class="field-tip">下次定投窗口 = 起始日期 + 间隔 × k ± 容错；「仅体检」策略只诊断不自动买卖</div>
         </div>
       </el-form>
       <template #footer>
@@ -326,16 +296,25 @@ const planForm = reactive({
   funds: [], // [{fund_id, target_ratio}]
 })
 const planFundOptions = ref([]) // 方案标的可选基金（不含现金）
+const intervalPresets = [
+  { label: '日（1 天）', value: 1 },
+  { label: '周（7 天）', value: 7 },
+  { label: '月（30 天）', value: 30 },
+  { label: '季（90 天）', value: 90 },
+]
 const planRules = {
   name: [{ required: true, message: '请输入方案名称', trigger: 'blur' }],
   amount: [{ required: true, message: '请输入每次投入金额', trigger: 'blur' }],
-  interval_days: [{ required: true, message: '请输入间隔天数', trigger: 'blur' }],
+  interval_days: [{ required: true, message: '请选择间隔周期', trigger: 'change' }],
   tolerance_days: [{ required: true, message: '请输入容错天数', trigger: 'blur' }],
 }
 
 const planFundsSum = computed(() =>
   planForm.funds.reduce((s, f) => s + Number(f.target_ratio || 0), 0)
 )
+const cashRatioNum = computed(() => Number(planForm.cash_ratio || 0))
+const ratioTotal = computed(() => planFundsSum.value + cashRatioNum.value)
+const ratioOk = computed(() => Math.abs(ratioTotal.value - 100) < 0.01)
 
 const rules = {
   fund_code: [
@@ -599,20 +578,89 @@ onMounted(async () => {
 .fund-tag {
   margin: 2px 4px 2px 0;
 }
-.fund-editor {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
+.plan-form .form-section {
+  margin-bottom: 20px;
 }
+.plan-form .form-section:last-child {
+  margin-bottom: 0;
+}
+.plan-form .section-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: #303133;
+  margin-bottom: 12px;
+  padding-left: 8px;
+  border-left: 3px solid #409eff;
+}
+.plan-form .section-hint {
+  font-size: 12px;
+  font-weight: 400;
+  color: #909399;
+  margin-left: 8px;
+}
+.fund-editor {
+  border: 1px solid #e4e7ed;
+  border-radius: 6px;
+  padding: 8px 12px;
+  background: #fafbfc;
+}
+.fund-head,
 .fund-row {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 12px;
+}
+.fund-head {
+  font-size: 12px;
+  color: #909399;
+  padding: 2px 0 6px;
+  border-bottom: 1px solid #ebeef5;
+  margin-bottom: 2px;
+}
+.fund-row {
+  padding: 5px 0;
+}
+.fund-row:not(:last-of-type) {
+  border-bottom: 1px dashed #f0f2f5;
+}
+.col-op {
+  width: 56px;
+  text-align: right;
+  flex-shrink: 0;
+}
+.add-fund-btn {
+  margin-top: 8px;
+}
+.ratio-block {
+  height: 8px;
+  border-radius: 4px;
+  background: #ebeef5;
+  margin-top: 12px;
+  overflow: hidden;
+}
+.ratio-fill {
+  height: 100%;
+  border-radius: 4px;
+  transition: width 0.2s;
+}
+.ratio-block.ok .ratio-fill {
+  background: #67c23a;
+}
+.ratio-block.warn .ratio-fill {
+  background: #e6a23c;
 }
 .ratio-tip {
-  margin-top: 8px;
-  color: #909399;
+  margin-top: 6px;
   font-size: 12px;
+}
+.ratio-tip.ok {
+  color: #67c23a;
+}
+.ratio-tip.warn {
+  color: #e6a23c;
+}
+.ratio-state {
+  margin-left: 6px;
 }
 .muted {
   color: #c0c4cc;

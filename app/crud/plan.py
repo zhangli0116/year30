@@ -60,13 +60,13 @@ def update_plan(
     db: Session, plan: models.DcaPlan, payload: schemas.PlanUpdate
 ) -> models.DcaPlan:
     data = payload.model_dump(exclude_unset=True)
-    funds = data.pop("funds", None)
-    if funds is not None:
-        validate_ratio(funds, data.get("cash_ratio", plan.cash_ratio))
+    data.pop("funds", None)  # funds 用 payload.funds（Pydantic 对象），model_dump 出来的是 dict
+    if payload.funds is not None:
+        validate_ratio(payload.funds, data.get("cash_ratio", plan.cash_ratio))
     for field, value in data.items():
         setattr(plan, field, value)
-    if funds is not None:
-        _replace_funds(db, plan.id, funds)
+    if payload.funds is not None:
+        _replace_funds(db, plan.id, payload.funds)
     db.commit()
     db.refresh(plan)
     return plan

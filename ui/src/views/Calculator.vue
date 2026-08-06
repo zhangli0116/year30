@@ -11,7 +11,7 @@
     <el-card shadow="never">
       <template #header>
         <div class="card-header">
-          <span>季度再平衡计算器</span>
+          <span>定投计算器</span>
           <div class="header-right">
             <span v-if="quoteTime" class="header-note">行情更新：{{ quoteTime }}</span>
             <el-button type="primary" size="small" :loading="loadingQuote" @click="fetchPrices">
@@ -22,7 +22,7 @@
       </template>
 
       <div class="intro-note">
-        拖动「目标占比」滑块，实时查看 <b>现有持仓 + 本季买入</b> 后的整体比例；手数可手动覆盖，滑块会自动回算。
+        拖动「目标占比」滑块，实时查看 <b>现有持仓 + 本期买入</b> 后的整体比例；手数可手动覆盖，滑块会自动回算。
       </div>
 
       <el-row :gutter="16" class="cards">
@@ -34,7 +34,7 @@
         </el-col>
         <el-col :span="8">
           <el-card shadow="hover">
-            <div class="stat-label">本季预算（元）</div>
+            <div class="stat-label">本期预算（元）</div>
             <el-input-number
               v-model="budget"
               :min="0"
@@ -142,7 +142,7 @@
           </template>
         </el-table-column>
 
-        <el-table-column label="本季手数" width="110" align="center">
+        <el-table-column label="本期手数" width="110" align="center">
           <template #default="{ row }">
             <el-input-number
               v-model="row.hands"
@@ -156,7 +156,7 @@
             />
           </template>
         </el-table-column>
-        <el-table-column label="本季金额" width="100" align="right">
+        <el-table-column label="本期金额" width="100" align="right">
           <template #default="{ row }">¥ {{ money(row.amount) }}</template>
         </el-table-column>
         <el-table-column label="手续费" width="80" align="right">
@@ -183,13 +183,13 @@
         title="现金"
       >
         <div class="cash-flow">
-          现有现金 ¥{{ money(cashCurrent) }} ＋ 本季现金 ¥{{ money(view.cashNew) }}
+          现有现金 ¥{{ money(cashCurrent) }} ＋ 本期现金 ¥{{ money(view.cashNew) }}
           ＝ 录入后现金 ¥{{ money(view.cashFinal) }}
           （<b>录入后占比 {{ view.cashPct == null ? '-' : view.cashPct.toFixed(2) + '%' }}</b>
           ，目标 {{ view.cashTargetPct.toFixed(1) }}%）
         </div>
         <div class="cash-breakdown">
-          本季构成：目标现金 ¥{{ money(view.cashTargetAmount) }}（{{ view.cashTargetPct.toFixed(1) }}%）＋ 结余 ¥{{ signedMoney(view.cashSurplus) }}
+          本期构成：目标现金 ¥{{ money(view.cashTargetAmount) }}（{{ view.cashTargetPct.toFixed(1) }}%）＋ 结余 ¥{{ signedMoney(view.cashSurplus) }}
           <span v-if="view.cashSurplus > 0" class="cash-hint">（新增现金高于目标，基金占比略低）</span>
           <span v-else-if="view.cashSurplus < 0" class="cash-hint">（新增现金不足目标，动用了现金仓）</span>
         </div>
@@ -211,7 +211,7 @@
           style="width: 180px"
         />
         <el-button type="success" size="large" @click="submitQuarter">
-          一键录入本季度
+          一键录入本期
         </el-button>
       </div>
     </el-card>
@@ -219,7 +219,7 @@
     <!-- 一键录入确认弹窗 -->
     <el-dialog
       v-model="confirmVisible"
-      title="一键录入本季度"
+      title="一键录入本期"
       width="560px"
       class="entry-dialog"
       :close-on-click-modal="false"
@@ -261,7 +261,7 @@
         <span>现金 <b class="entry-cash">¥{{ money(confirmData.cashAmount) }}</b></span>
       </div>
       <div class="entry-hint">
-        确认后录入「{{ confirmData.period }}」：本季权益 / 手续费 / 剩余现金将自动重算。
+        确认后录入「{{ confirmData.period }}」：本期权益 / 手续费 / 剩余现金将自动重算。
       </div>
 
       <template #footer>
@@ -278,12 +278,14 @@ import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import PlanSwitcher from '../components/PlanSwitcher.vue'
 import { fundsApi, planApi, purchasesApi, quartersApi, quotesApi } from '../api'
+import { intervalLabel, periodFromDate } from '../utils/plan'
 
 const router = useRouter()
 const CASH_CODE = '000000'
 
 // 当前选中的定投方案：标的与 target_ratio 取自该方案，预算默认取方案 amount
 const planId = ref(null)
+const planInterval = ref('quarterly') // 当前方案的定投周期，用于生成 period
 
 const budget = ref(12500)
 const feeRate = ref(0.03) // 手续费费率（%），默认 0.03
@@ -336,7 +338,7 @@ const view = computed(() => {
     const currentMV = r.price ? r.currentShares * r.price : null
     const currentPct =
       currentTotal > 0 && currentMV != null ? (currentMV / currentTotal) * 100 : null
-    // 本金 = 手数×一手价；手续费 = max(5, 本金×费率)；本季金额 = 本金 + 手续费
+    // 本金 = 手数×一手价；手续费 = max(5, 本金×费率)；本期金额 = 本金 + 手续费
     const principal = r.hands && handPrice ? +(r.hands * handPrice).toFixed(2) : 0
     const fee = principal > 0 ? +Math.max(5, (principal * feeRate.value) / 100).toFixed(2) : 0
     const amount = +(principal + fee).toFixed(2)
@@ -353,8 +355,8 @@ const view = computed(() => {
     0,
     100 - rows.reduce((s, r) => s + (r.targetPct || 0), 0)
   )
-  // 达到整体现金目标所需的「本季新增现金」= 目标占比 × 录入后总资产 − 现有现金
-  // （与基金侧同一口径：占比基于录入后总资产，而非本季预算）
+  // 达到整体现金目标所需的「本期新增现金」= 目标占比 × 录入后总资产 − 现有现金
+  // （与基金侧同一口径：占比基于录入后总资产，而非本期预算）
   const cashTargetAmount = Math.max(
     0,
     (cashTargetPct / 100) * finalTotal - cashCurrent.value
@@ -407,7 +409,7 @@ function sliderMax(row) {
 }
 
 // ---- 滑块 → 手数（全局重算 + 预算上限）----
-// 每只基金按目标占比反推需买本金；若总缺口超过本季预算，则按缺口比例缩放，
+// 每只基金按目标占比反推需买本金；若总缺口超过本期预算，则按缺口比例缩放，
 // 保证「本金 + 手续费」总投入 ≤ 预算，不会超支。
 function onSlider(changedRow) {
   changedRow._manual = false
@@ -498,15 +500,7 @@ async function fetchPrices() {
   }
 }
 
-// ---- 一键录入本季度 ----
-// 流程：建 quarter → 批量带 quarter_id 建购买记录 → recalc quarter
-function periodFromDate(dateStr) {
-  if (!dateStr) return ''
-  const d = new Date(dateStr)
-  const q = Math.floor(d.getMonth() / 3) + 1
-  return d.getFullYear() + 'Q' + q
-}
-
+// ---- 一键录入本期 ----
 // 一键录入：先弹确认摘要，确认后再走 建 quarter → 批量记录 → recalc
 function submitQuarter() {
   const rowsWithHands = view.value.arr.filter((r) => r.hands > 0)
@@ -522,12 +516,12 @@ function submitQuarter() {
   // 防止手动覆盖手数后总投入超过预算（否则季度 cash_amount 会变负）
   if (view.value.fundAmount > budget.value + 0.01) {
     ElMessage.warning(
-      `本季投入 ${money(view.value.fundAmount)} 元超出预算 ${money(budget.value)} 元，请调整预算或减少手数`
+      `本期投入 ${money(view.value.fundAmount)} 元超出预算 ${money(budget.value)} 元，请调整预算或减少手数`
     )
     return
   }
 
-  confirmData.period = periodFromDate(quarterDate.value)
+  confirmData.period = periodFromDate(quarterDate.value, planInterval.value)
   confirmData.budget = budget.value
   confirmData.rows = rowsWithHands.map((r) => ({
     name: r.fund_name,
@@ -631,6 +625,7 @@ async function loadForPlan() {
     ])
     const plan = (plans || []).find((p) => p.id === planId.value)
     if (plan && plan.amount != null) budget.value = Number(plan.amount)
+    if (plan) planInterval.value = intervalLabel(plan.interval_days)
 
     const sumMap = Object.fromEntries((sumData.funds || []).map((f) => [f.fund_id, f]))
     // 基金元数据兜底（方案内 fund_code/fund_name 缺失时用）

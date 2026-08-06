@@ -180,19 +180,22 @@
           </el-radio-group>
         </el-form-item>
         <el-form-item label="季度" prop="quarter_id">
-          <el-select
-            v-model="form.quarter_id"
-            placeholder="选择季度（不选则归入未归类）"
-            clearable
-            style="width: 100%"
-          >
-            <el-option
-              v-for="q in quarterOptions"
-              :key="q.id"
-              :label="q.period"
-              :value="q.id"
-            />
-          </el-select>
+          <div class="quarter-field">
+            <el-select
+              v-model="form.quarter_id"
+              placeholder="选择季度（不选则归入未归类）"
+              clearable
+              style="flex: 1"
+            >
+              <el-option
+                v-for="q in quarterOptions"
+                :key="q.id"
+                :label="q.period"
+                :value="q.id"
+              />
+            </el-select>
+            <el-button size="small" @click="openNewQuarter">新建季度</el-button>
+          </div>
         </el-form-item>
         <el-form-item label="基金" prop="fund_id">
           <el-select
@@ -326,17 +329,66 @@
         <el-button type="primary" :loading="saving" @click="handleSubmit">保存</el-button>
       </template>
     </el-dialog>
+
+    <!-- 新建季度弹窗（嵌套在记录弹窗内） -->
+    <el-dialog
+      v-model="newQuarterVisible"
+      title="新建季度"
+      width="420px"
+      :close-on-click-modal="false"
+    >
+      <el-form label-width="90px">
+        <el-form-item label="起始日期" required>
+          <el-date-picker
+            v-model="newQuarterForm.start_date"
+            type="date"
+            value-format="YYYY-MM-DD"
+            placeholder="选择起始日期"
+            style="width: 100%"
+          />
+        </el-form-item>
+        <el-form-item label="预算" required>
+          <el-input-number
+            v-model="newQuarterForm.budget"
+            :min="0"
+            :precision="2"
+            :controls="false"
+            style="width: 100%"
+          />
+        </el-form-item>
+        <el-form-item label="周期标识">
+          <span>{{ newQuarterForm.period }}</span>
+          <span class="muted">（自动按方案周期生成）</span>
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="newQuarterVisible = false">取消</el-button>
+        <el-button type="primary" :loading="saving" @click="createQuarter">创建</el-button>
+      </template>
+    </el-dialog>
   </el-card>
 </template>
 
 <script setup>
-import { computed, reactive, ref } from 'vue'
+import { computed, reactive, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import PlanSwitcher from '../components/PlanSwitcher.vue'
-import { fundsApi, purchasesApi, quartersApi, quotesApi } from '../api'
+import { fundsApi, planApi, purchasesApi, quartersApi, quotesApi } from '../api'
+import { intervalLabel, periodFromDate } from '../utils/plan'
 
 // 当前选中的定投方案：季度与购买记录都按方案过滤
 const planId = ref(null)
+const currentPlan = ref(null) // 当前方案（取 interval/amount，用于新建季度）
+
+// 新建季度弹窗
+const newQuarterVisible = ref(false)
+const newQuarterForm = reactive({ start_date: '', budget: 0, period: '' })
+watch(
+  () => newQuarterForm.start_date,
+  (v) => {
+    newQuarterForm.period = periodFromDate(v, intervalLabel(currentPlan.value?.interval_days))
+  }
+)
 
 const loading = ref(false)
 const fundOptions = ref([])
@@ -425,11 +477,13 @@ async function load() {
   loading.value = true
   try {
     const pp = planId.value ? { plan_id: planId.value } : {}
-    const [qData, pData, fData] = await Promise.all([
+    const [qData, pData, fData, plans] = await Promise.all([
       quartersApi.list(pp),
       purchasesApi.list({ page: 1, page_size: 100, ...pp }), // 默认排除现金记录
       fundsApi.list({ page: 1, page_size: 100 }),
+      planApi.list().catch(() => []),
     ])
+    currentPlan.value = (plans || []).find((p) => p.id === planId.value) || null
     quartersRaw.value = qData || []
     // 现金基金不作为可选基金
     const real = (fData.items || []).filter((f) => f.fund_code !== '000000')
@@ -483,6 +537,48 @@ function todayStr() {
   const m = String(d.getMonth() + 1).padStart(2, '0')
   const day = String(d.getDate()).padStart(2, '0')
   return `${d.getFullYear()}-${m}-${day}`
+}
+
+// 新建季度：按方案周期自动生成 period，创建后回填到当前记录弹窗
+function openNewQuarter() {
+  newQuarterForm.start_date = todayStr()
+  newQuarterForm.budget =
+    currentPlan.value && currentPlan.value.amount != null
+      ? Number(currentPlan.value.amount)
+      : 0
+  newQuarterForm.period = periodFromDate(
+    newQuarterForm.start_date,
+    intervalLabel(currentPlan.value?.interval_days)
+  )
+  newQuarterVisible.value = true
+}
+
+async function createQuarter() {
+  if (!newQuarterForm.start_date) {
+    ElMessage.warning('请选择起始日期')
+    return
+  }
+  if (newQuarterForm.budget <= 0) {
+    ElMessage.warning('请输入预算')
+    return
+  }
+  saving.value = true
+  try {
+    const q = await quartersApi.create({
+      plan_id: planId.value,
+      period: newQuarterForm.period,
+      start_date: newQuarterForm.start_date,
+      budget: newQuarterForm.budget,
+    })
+    ElMessage.success(`季度 ${q.period} 已创建`)
+    newQuarterVisible.value = false
+    form.quarter_id = q.id
+    await load()
+  } catch {
+    // 拦截器已提示
+  } finally {
+    saving.value = false
+  }
 }
 
 function openCreate(quarterId) {
@@ -704,6 +800,15 @@ async function handleDelete(row) {
 }
 .orphan-card .q-period {
   color: #909399;
+}
+.quarter-field {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+}
+.muted {
+  color: #c0c4cc;
 }
 .price-cell {
   display: flex;
