@@ -41,6 +41,12 @@
         <div class="ctl">
           <el-switch v-model="yearEndRebalance" active-text="年末卖出式再平衡" />
         </div>
+        <div class="ctl">
+          <el-select v-model="unlistedMode" style="width: 190px" title="方案内标的在回测起始时未上市（无历史价）时的处理">
+            <el-option label="未上市标的：现金停放" value="park" />
+            <el-option label="未上市标的：比例重分配" value="redistribute" />
+          </el-select>
+        </div>
         <div class="ctl bench-ctl">
           <span class="ctl-label">对比基准</span>
           <el-select v-model="benchmarks" multiple clearable placeholder="选择基准" style="width: 300px">
@@ -165,7 +171,7 @@
           <el-card shadow="hover" class="m-card">
             <div class="m-label">累计收益</div>
             <div class="m-big" :class="numOr(gain, 0) >= 0 ? 'up' : 'down'">{{ signedMoney(gain) }}</div>
-            <div class="m-sub">{{ fmtPct(gainPct) }}</div>
+            <div class="m-sub">{{ fmtGainPct(gainPct) }}</div>
           </el-card>
         </el-col>
       </el-row>
@@ -223,7 +229,7 @@
 </template>
 
 <script setup>
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import * as echarts from 'echarts'
@@ -248,6 +254,7 @@ const planId = ref(null)
 const startDate = ref('')
 const amount = ref(null)
 const yearEndRebalance = ref(true)
+const unlistedMode = ref('park') // 未上市标的处理：park=现金停放 / redistribute=比例重分配
 const benchmarks = ref([])
 const benchmarkList = ref([])
 
@@ -351,6 +358,7 @@ function backtestParams() {
     ...(amount.value ? { amount: amount.value } : {}),
     ...(benchmarks.value.length ? { benchmarks: benchmarks.value.join(',') } : {}),
     year_end_rebalance: yearEndRebalance.value,
+    unlisted_mode: unlistedMode.value,
   }
 }
 
@@ -407,16 +415,23 @@ async function runBacktest() {
   loading.value = true
   result.value = null
   warnings.value = []
+  disposeCharts() // 释放旧实例：v-if 移除图表 DOM 后实例会挂到脱离元素上
   try {
     const data = await backtestApi.run(backtestParams())
     result.value = data
     warnings.value = data.warnings || []
+    await nextTick() // 等 v-if 渲染出图表容器再 init/setOption，否则 chartEl 为 null
     renderAll()
   } catch {
     // 拦截器已提示
   } finally {
     loading.value = false
   }
+}
+
+function disposeCharts() {
+  ;[assetChart, ddChart, benchChart].forEach((c) => c && c.dispose())
+  assetChart = ddChart = benchChart = null
 }
 
 // ---- 图表 ----
@@ -536,6 +551,12 @@ function fmtPct(v) {
   const n = Number(v)
   return `${(n >= 0 ? '+' : '')}${(n * 100).toFixed(2)}%`
 }
+// gain_pct 后端返回的已是百分比数值（如 13.46 表示 13.46%），直接显示不再乘 100
+function fmtGainPct(v) {
+  if (v == null) return '—'
+  const n = Number(v)
+  return `${(n >= 0 ? '+' : '')}${n.toFixed(2)}%`
+}
 function money(v) {
   return Number(v || 0).toLocaleString('zh-CN', {
     minimumFractionDigits: 2,
@@ -558,8 +579,7 @@ onMounted(async () => {
 
 onBeforeUnmount(() => {
   window.removeEventListener('resize', onResize)
-  ;[assetChart, ddChart, benchChart].forEach((c) => c && c.dispose())
-  assetChart = ddChart = benchChart = null
+  disposeCharts()
 })
 </script>
 

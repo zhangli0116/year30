@@ -40,12 +40,18 @@ def run(
     amount: Decimal | None = Query(None, description="每期金额覆盖，缺省用方案 amount"),
     benchmarks: str | None = Query(None, description="逗号分隔的基准 symbol"),
     year_end_rebalance: bool = Query(True, description="年末卖出式再平衡开关"),
+    unlisted_mode: str = Query(
+        "park",
+        description="未上市标的处理：park=现金停泊(默认) / redistribute=比例重分配",
+    ),
     db: Session = Depends(get_db),
 ) -> ApiResponse:
     """回测：每期入账+买入式平衡，每年末卖出式再平衡，算年化回报并对比基准。"""
     plan = crud.plan.get_plan(db, plan_id)
     if plan is None:
         return error(40403, f"方案 {plan_id} 不存在")
+    if unlisted_mode not in ("park", "redistribute"):
+        return error(40006, f"未知未上市处理方式：{unlisted_mode}")
     data = backtest_service.run_backtest(
         db,
         plan,
@@ -54,6 +60,7 @@ def run(
         amount=amount,
         benchmark_symbols=_split_symbols(benchmarks),
         year_end_rebalance=year_end_rebalance,
+        unlisted_mode=unlisted_mode,
     )
     logger.info(
         f"回测 方案{plan_id} {start_date}~{end_date or date.today()} "

@@ -626,6 +626,7 @@ class BacktestParamsOut(BaseModel):
     interval_days: int
     rebalance_strategy: str
     year_end_rebalance: bool = True
+    unlisted_mode: str = "park"  # 未上市标的处理：park=现金停泊 / redistribute=比例重分配
 
 
 class BacktestOut(BaseModel):

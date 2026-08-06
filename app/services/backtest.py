@@ -32,13 +32,21 @@ def run_backtest(
     amount: Decimal | None = None,
     benchmark_symbols: list[str] | None = None,
     year_end_rebalance: bool = True,
+    unlisted_mode: str = "park",
 ) -> dict:
-    """执行回测，返回结构化的结果 dict（供 router 组装 schema）。"""
+    """执行回测，返回结构化的结果 dict（供 router 组装 schema）。
+
+    unlisted_mode：方案内标的「当时未上市/无历史价」时的处理——
+        park（默认）       ：现金停泊，缺席标的的份额趴在现金里，上市后再补买
+        redistribute       ：比例重分配，缺席标的的份额按比例分给已有标的（现金保持目标），
+                             上市后切回原目标（会产生一次调仓）
+    """
     today = end_date or date.today()
     benchmark_symbols = benchmark_symbols or []
     amount = amount if amount is not None else Decimal(str(plan.amount or 0))
     interval = plan.interval_days or 0
     warnings: list[str] = []
+    cash_target_pct = Decimal(str(plan.cash_ratio or 0))
 
     # ---- 方案标的（排除现金虚拟基金）----
     plan_funds = db.execute(
@@ -87,7 +95,7 @@ def run_backtest(
         all_dates.update(pd.keys())
     trade_days = sorted(all_dates)
     if not trade_days:
-        return _empty(plan, warnings, amount, start_date, today)
+        return _empty(plan, warnings, amount, start_date, today, unlisted_mode)
 
     eff_start = max(start_date, trade_days[0])
     last_day = trade_days[-1]
@@ -135,6 +143,26 @@ def run_backtest(
     def prices_at(d: date) -> dict[int, Decimal]:
         return {fid: price_fwd(fid, d) for fid in price_dates}
 
+    def target_pct_for(f: dict, d: date) -> Decimal:
+        """某日某标的的有效目标占比。
+
+        默认（park）：固定用方案原始占比（缺席标的无价时被跳过，现金吸收）。
+        redistribute：缺席标的（当日无价）占比为 0；可用标的按比例放大，
+            使「可用标的 + 现金」= 100%（现金保持目标），满仓运作；全部可用则回到原始占比。
+        """
+        if unlisted_mode != "redistribute":
+            return f["target_ratio"]
+        available = [g for g in funds if price_fwd(g["fund_id"], d) is not None]
+        if not available or len(available) == len(funds):
+            return f["target_ratio"]
+        if price_fwd(f["fund_id"], d) is None:
+            return Decimal("0")  # 缺席不交易
+        avail_sum = sum(g["target_ratio"] for g in available)
+        if avail_sum <= 0:
+            return f["target_ratio"]
+        scale = (Decimal("100") - cash_target_pct) / avail_sum
+        return f["target_ratio"] * scale
+
     def buy_side(d: date, p: dict[int, Decimal], reason: str) -> None:
         nonlocal cash
         total = cash + sum(shares.get(fid, 0) * p[fid] for fid in p if p[fid] is not None)
@@ -142,9 +170,9 @@ def run_backtest(
             fid = f["fund_id"]
             price = p.get(fid)
             if price is None:
-                continue  # 当日停牌，不买
+                continue  # 当日停牌/未上市，不买
             mv = shares.get(fid, 0) * price
-            gap = total * f["target_ratio"] / Decimal("100") - mv
+            gap = total * target_pct_for(f, d) / Decimal("100") - mv
             if gap <= 0:
                 continue  # 超配/达标 → 不卖
             lot = price * _HANDS
@@ -187,7 +215,7 @@ def run_backtest(
                 warnings.append(f"{f['fund_code']} 年末再平衡当日无价，跳过该基金")
                 continue
             mv = shares.get(fid, 0) * price
-            target_mv = total * f["target_ratio"] / Decimal("100")
+            target_mv = total * target_pct_for(f, d) / Decimal("100")
             if mv <= target_mv:
                 continue
             lot = price * _HANDS
@@ -219,7 +247,7 @@ def run_backtest(
             if price is None or cash <= 0:
                 continue
             mv = shares.get(fid, 0) * price
-            target_mv = total * f["target_ratio"] / Decimal("100")
+            target_mv = total * target_pct_for(f, d) / Decimal("100")
             if mv >= target_mv:
                 continue
             lot = price * _HANDS
@@ -329,6 +357,7 @@ def run_backtest(
             "interval_days": interval,
             "rebalance_strategy": plan.rebalance_strategy,
             "year_end_rebalance": year_end_rebalance,
+            "unlisted_mode": unlisted_mode,
         },
         "metrics": {
             "xirr": xirr_val,
@@ -577,7 +606,7 @@ def _segments(days: list[date]) -> list[dict]:
     return out
 
 
-def _empty(plan, warnings, amount, start_date, today) -> dict:
+def _empty(plan, warnings, amount, start_date, today, unlisted_mode="park") -> dict:
     return {
         "plan_id": plan.id,
         "plan_name": plan.name,
@@ -588,6 +617,7 @@ def _empty(plan, warnings, amount, start_date, today) -> dict:
             "interval_days": plan.interval_days or 0,
             "rebalance_strategy": plan.rebalance_strategy,
             "year_end_rebalance": True,
+            "unlisted_mode": unlisted_mode,
         },
         "metrics": {
             "xirr": None,

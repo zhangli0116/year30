@@ -179,7 +179,7 @@ ui/
 ### 方案回测 backtest
 | 方法 | 路径 | 说明 |
 |---|---|---|
-| GET | `/backtest` | 回测（plan_id + start_date + end_date?/amount?/benchmarks?/year_end_rebalance?），返回 XIRR 年化/TWR/最大回撤/每日曲线/交易明细/基准对比 |
+| GET | `/backtest` | 回测（plan_id + start_date + end_date?/amount?/benchmarks?/year_end_rebalance?/unlisted_mode?），返回 XIRR 年化/TWR/最大回撤/每日曲线/交易明细/基准对比；`unlisted_mode` = park(未上市标的现金停放,默认)/redistribute(比例重分配) |
 | GET | `/backtest/coverage` | 数据覆盖检查（各基金 + 所选基准在区间的缺失情况，`ready` 是否全部覆盖） |
 
 ### 对比基准 benchmarks
