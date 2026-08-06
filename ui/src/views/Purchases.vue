@@ -67,7 +67,7 @@
                   </div>
                 </template>
               </el-table-column>
-              <el-table-column prop="purchase_date" label="购买日期" width="120" />
+              <el-table-column prop="purchase_date" label="交易日期" width="120" />
               <el-table-column label="单价" width="100" align="right">
                 <template #default="{ row }">{{ Number(row.price).toFixed(4) }}</template>
               </el-table-column>
@@ -125,7 +125,7 @@
                   </div>
                 </template>
               </el-table-column>
-              <el-table-column prop="purchase_date" label="购买日期" width="120" />
+              <el-table-column prop="purchase_date" label="交易日期" width="120" />
               <el-table-column label="单价" width="100" align="right">
                 <template #default="{ row }">{{ Number(row.price).toFixed(4) }}</template>
               </el-table-column>
@@ -162,10 +162,16 @@
     <!-- 新增 / 编辑弹窗（保留：选价五档 / 手数 / 每手份数 / 金额 / 备注） -->
     <el-dialog
       v-model="dialogVisible"
-      :title="isEdit ? '编辑购买记录' : '新增购买记录'"
+      :title="dialogTitle"
       width="520px"
     >
       <el-form ref="formRef" :model="form" :rules="rules" label-width="110px">
+        <el-form-item label="类型">
+          <el-radio-group v-model="form.type" @change="onTypeChange">
+            <el-radio-button value="buy">买入</el-radio-button>
+            <el-radio-button value="sell">卖出</el-radio-button>
+          </el-radio-group>
+        </el-form-item>
         <el-form-item label="季度" prop="quarter_id">
           <el-select
             v-model="form.quarter_id"
@@ -196,7 +202,7 @@
             />
           </el-select>
         </el-form-item>
-        <el-form-item label="购买日期" prop="purchase_date">
+        <el-form-item label="交易日期" prop="purchase_date">
           <el-date-picker
             v-model="form.purchase_date"
             type="date"
@@ -290,16 +296,18 @@
               = ¥{{ money(computedFee) }}
             </el-tag>
           </div>
-          <div class="field-tip">费率(%)，手续费 = max(5, 本金 × 费率)，不足 5 元按 5 元</div>
+          <div class="field-tip">
+            费率(%)，手续费 = max(5, {{ isSell ? '成交额' : '本金' }} × 费率)，不足 5 元按 5 元；卖出默认 0.07
+          </div>
         </el-form-item>
-        <el-form-item label="总金额">
+        <el-form-item :label="isSell ? '成交金额' : '总金额'">
           <el-input-number
             v-model="form.total_amount"
             :min="0.01"
             :precision="2"
             :controls="false"
             style="width: 100%"
-            placeholder="留空自动计算 = 本金 + 手续费"
+            :placeholder="isSell ? '留空自动计算 = 成交额（本金）' : '留空自动计算 = 本金 + 手续费'"
           />
         </el-form-item>
         <el-form-item label="备注">
@@ -338,6 +346,7 @@ const quote = ref(null) // 当前基金的行情 {last, bid, ask}
 const priceSource = ref(null)
 let suppressClear = false
 const form = reactive({
+  type: 'buy', // buy=买入 / sell=卖出
   quarter_id: null,
   fund_id: null,
   purchase_date: '',
@@ -351,25 +360,33 @@ const form = reactive({
 
 const rules = {
   fund_id: [{ required: true, message: '请选择基金', trigger: 'change' }],
-  purchase_date: [{ required: true, message: '请选择购买日期', trigger: 'change' }],
+  purchase_date: [{ required: true, message: '请选择交易日期', trigger: 'change' }],
   price: [{ required: true, message: '请输入每股价格', trigger: 'blur' }],
   hands: [{ required: true, message: '请输入手数', trigger: 'blur' }],
 }
 
 const quarterOptions = computed(() => quartersRaw.value)
 
-// 手续费 = max(5, 本金 × 费率%)，费率默认 0.03
+const isSell = computed(() => form.type === 'sell')
+
+const dialogTitle = computed(() => {
+  const action = isSell.value ? '卖出' : '买入'
+  return `${isEdit.value ? '编辑' : '新增'}${action}记录`
+})
+
+// 手续费 = max(5, 本金/成交额 × 费率%)；买入默认 0.03、卖出默认 0.07
 const computedFee = computed(() => {
   const principal = Number(form.price || 0) * (form.hands || 0) * (form.shares_per_hand || 100)
   if (principal <= 0) return 0
-  return Math.max(5, +(principal * (form.fee_rate || 0.03) / 100).toFixed(2))
+  return Math.max(5, +(principal * (form.fee_rate || (isSell.value ? 0.07 : 0.03)) / 100).toFixed(2))
 })
 
-// 编辑时由存量手续费反推费率展示；等于最低 5 元时回默认 0.03
-function effectiveRate(fee, principal) {
-  if (principal <= 0) return 0.03
+// 编辑时由存量手续费反推费率展示；等于最低 5 元或默认费率时回默认
+function effectiveRate(fee, principal, sell = false) {
+  const dflt = sell ? 0.07 : 0.03
+  if (principal <= 0) return dflt
   const r = (fee / principal) * 100
-  return r <= 0.03 ? 0.03 : +r.toFixed(4)
+  return r <= dflt ? dflt : +r.toFixed(4)
 }
 
 function fundName(id) {
@@ -453,6 +470,7 @@ function todayStr() {
 
 function openCreate(quarterId) {
   Object.assign(form, {
+    type: 'buy',
     quarter_id: quarterId ?? null,
     fund_id: null,
     purchase_date: todayStr(),
@@ -471,8 +489,10 @@ function openCreate(quarterId) {
 }
 
 function openEdit(row) {
+  const sell = row.type === 'sell'
   const principal = Number(row.price) * row.hands * row.shares_per_hand
   Object.assign(form, {
+    type: row.type || 'buy',
     quarter_id: row.quarter_id,
     fund_id: row.fund_id,
     purchase_date: row.purchase_date,
@@ -480,7 +500,7 @@ function openEdit(row) {
     hands: row.hands,
     shares_per_hand: row.shares_per_hand,
     total_amount: row.total_amount != null ? Number(row.total_amount) : null,
-    fee_rate: effectiveRate(Number(row.fee || 0), principal),
+    fee_rate: effectiveRate(Number(row.fee || 0), principal, sell),
     note: row.note || '',
   })
   quote.value = null
@@ -489,6 +509,11 @@ function openEdit(row) {
   editingId.value = row.id
   dialogVisible.value = true
   loadQuote()
+}
+
+// 切换买卖类型时，重置费率默认为该类型的缺省值
+function onTypeChange() {
+  form.fee_rate = isSell.value ? 0.07 : 0.03
 }
 
 // 按当前选中的基金拉行情（含五档），现金基金不取
@@ -531,6 +556,7 @@ function money(v) {
 async function handleSubmit() {
   await formRef.value.validate()
   const payload = {
+    type: form.type,
     quarter_id: form.quarter_id,
     fund_id: form.fund_id,
     purchase_date: form.purchase_date,
@@ -563,7 +589,7 @@ async function handleSubmit() {
 async function handleDelete(row) {
   try {
     await ElMessageBox.confirm(
-      `确定删除 ${row.purchase_date} 的购买记录吗？`,
+      `确定删除 ${row.purchase_date} 的${row.type === 'sell' ? '卖出' : '买入'}记录吗？`,
       '提示',
       { type: 'warning' }
     )
