@@ -5,6 +5,11 @@
         <div class="card-header">
           <span>每日权益流水</span>
           <div class="header-right">
+            <PlanSwitcher
+              :model-value="planId"
+              @update:model-value="planId = $event"
+              @change="onPlanChange"
+            />
             <el-select v-model="fundId" placeholder="选择基金" style="width: 200px" @change="loadHoldings">
               <el-option
                 v-for="f in fundOptions"
@@ -82,6 +87,7 @@
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import * as echarts from 'echarts'
 import { fundsApi, holdingsApi } from '../api'
+import PlanSwitcher from '../components/PlanSwitcher.vue'
 import {
   averageMarkLine,
   colors,
@@ -94,10 +100,13 @@ import {
   yAxis,
 } from '../utils/chart'
 
+const planId = ref(null)
 const fundOptions = ref([])
 const fundId = ref(null)
 const startDate = ref('')
 const endDate = ref('')
+// 按当前方案过滤（缺省不带 plan_id 时后端回退默认方案）
+const planParams = () => (planId.value ? { plan_id: planId.value } : {})
 const generating = ref(false)
 const loading = ref(false)
 const note = ref('')
@@ -127,6 +136,7 @@ async function generateHoldings() {
     fund_id: fundId.value,
     start_date: startDate.value,
     end_date: endDate.value,
+    ...planParams(),
   })
   if (!check.missing_days) {
     note.value = '该区间已全部生成，无缺失。'
@@ -144,6 +154,7 @@ async function confirmGenerate() {
       fund_id: fundId.value,
       start_date: startDate.value,
       end_date: endDate.value,
+      ...planParams(),
     })
     note.value = `已生成 ${r.generated} 个交易日的权益流水`
     await loadHoldings()
@@ -163,6 +174,7 @@ async function loadHoldings() {
         fund_id: fundId.value,
         start_date: startDate.value,
         end_date: endDate.value,
+        ...planParams(),
       })) || []
   } catch {
     holdings.value = []
@@ -199,6 +211,11 @@ function render() {
 
 function onResize() {
   chart && chart.resize()
+}
+
+// 方案切换：按新方案重拉权益流水
+function onPlanChange() {
+  loadHoldings()
 }
 
 onMounted(async () => {

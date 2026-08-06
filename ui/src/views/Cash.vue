@@ -5,6 +5,11 @@
         <div class="card-header">
           <span>每日现金流量</span>
           <div class="header-right">
+            <PlanSwitcher
+              :model-value="planId"
+              @update:model-value="planId = $event"
+              @change="onPlanChange"
+            />
             <div class="date-inputs">
               <el-date-picker
                 v-model="startDate"
@@ -71,6 +76,7 @@ import { onBeforeUnmount, onMounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import * as echarts from 'echarts'
 import { cashApi } from '../api'
+import PlanSwitcher from '../components/PlanSwitcher.vue'
 import {
   averageMarkLine,
   colors,
@@ -83,10 +89,13 @@ import {
   yAxis,
 } from '../utils/chart'
 
+const planId = ref(null)
 const startDate = ref('')
 const endDate = ref('')
 const generating = ref(false)
 const loading = ref(false)
+// 按当前方案过滤（缺省不带 plan_id 时后端回退默认方案）
+const planParams = () => (planId.value ? { plan_id: planId.value } : {})
 const note = ref('')
 const rows = ref([]) // [{trade_date, increment, cash_amount}]
 const genConfirmVisible = ref(false)
@@ -111,6 +120,7 @@ async function generateCash() {
   const check = await cashApi.check({
     start_date: startDate.value,
     end_date: endDate.value,
+    ...planParams(),
   })
   if (!check.missing_days) {
     note.value = '该区间已全部生成，无缺失。'
@@ -127,6 +137,7 @@ async function confirmGenerate() {
     const r = await cashApi.generate({
       start_date: startDate.value,
       end_date: endDate.value,
+      ...planParams(),
     })
     note.value = `已生成 ${r.generated} 天的现金流`
     await loadCash()
@@ -141,7 +152,12 @@ async function loadCash() {
   if (!startDate.value || !endDate.value) return
   loading.value = true
   try {
-    rows.value = (await cashApi.list({ start_date: startDate.value, end_date: endDate.value })) || []
+    rows.value =
+      (await cashApi.list({
+        start_date: startDate.value,
+        end_date: endDate.value,
+        ...planParams(),
+      })) || []
   } catch {
     rows.value = []
   } finally {
@@ -177,6 +193,11 @@ function render() {
 
 function onResize() {
   chart && chart.resize()
+}
+
+// 方案切换：按新方案重拉现金流
+function onPlanChange() {
+  loadCash()
 }
 
 onMounted(async () => {
