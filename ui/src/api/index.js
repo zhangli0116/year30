@@ -26,10 +26,21 @@ request.interceptors.response.use(
   }
 )
 
+export const planApi = {
+  // 定投方案：GET/POST/PUT/DELETE /api/v1/plans
+  // plan funds 形如 [{fund_id, target_ratio}]，create/update 时随 body 提交
+  list: () => request.get('/plans'),
+  detail: (id) => request.get(`/plans/${id}`),
+  create: (data) => request.post('/plans', data),
+  update: (id, data) => request.put(`/plans/${id}`, data),
+  remove: (id) => request.delete(`/plans/${id}`),
+}
+
 export const fundsApi = {
   // GET /api/v1/funds?page=&page_size=&keyword=
   list: (params) => request.get('/funds', { params }),
-  summary: () => request.get('/funds/summary'),
+  // GET /api/v1/funds/summary?plan_id=   （传 plan_id 时 target_ratio 为该方案内比例）
+  summary: (params) => request.get('/funds/summary', { params }),
   detail: (id) => request.get(`/funds/${id}`),
   create: (data) => request.post('/funds', data),
   update: (id, data) => request.put(`/funds/${id}`, data),
@@ -83,8 +94,8 @@ export const holdingsApi = {
 }
 
 export const quartersApi = {
-  // GET /api/v1/quarters
-  list: () => request.get('/quarters'),
+  // GET /api/v1/quarters?plan_id=   （可选按方案过滤）
+  list: (params) => request.get('/quarters', { params }),
   // GET /api/v1/quarters/{id}
   detail: (id) => request.get(`/quarters/${id}`),
   // POST /api/v1/quarters
@@ -96,13 +107,14 @@ export const quartersApi = {
 }
 
 export const xirrApi = {
-  // GET /api/v1/xirr → {account: {...}, funds: [...]}
-  get: () => request.get('/xirr'),
+  // GET /api/v1/xirr?plan_id= → {account: {...}, funds: [...]}
+  get: (params) => request.get('/xirr', { params }),
 }
 
 export const syncApi = {
   // POST /api/v1/sync/all —— 一键同步全部行情并生成权益/现金流
-  all: () => request.post('/sync/all'),
+  // 同步可能较慢（拉取多只基金），放宽超时到 60s
+  all: () => request.post('/sync/all', null, { timeout: 60000 }),
 }
 
 export const rebalanceApi = {

@@ -62,6 +62,7 @@ class PurchaseOut(BaseModel):
 
 
 class PurchaseCreate(BaseModel):
+    plan_id: int = Field(..., description="所属方案ID")
     fund_id: int = Field(..., description="基金ID")
     type: Literal["buy", "sell"] = Field("buy", description="交易类型：buy=买入 / sell=卖出")
     purchase_date: date = Field(..., description="购买日期")
@@ -82,6 +83,7 @@ class PurchaseCreate(BaseModel):
 
 
 class PurchaseUpdate(BaseModel):
+    plan_id: Optional[int] = Field(None, description="所属方案ID")
     fund_id: Optional[int] = Field(None, description="基金ID")
     type: Optional[Literal["buy", "sell"]] = Field(None, description="交易类型")
     purchase_date: Optional[date] = Field(None, description="购买日期")
@@ -121,6 +123,7 @@ class QuarterDetail(QuarterOut):
 
 
 class QuarterCreate(BaseModel):
+    plan_id: int = Field(..., description="所属方案ID")
     period: str = Field(..., min_length=1, max_length=10, description="周期标识，如 2026Q3")
     start_date: Optional[date] = Field(None, description="周期开始日期")
     end_date: Optional[date] = Field(None, description="周期结束日期")
@@ -262,6 +265,7 @@ class HoldingOut(BaseModel):
 
 
 class HoldingGenerateIn(BaseModel):
+    plan_id: Optional[int] = Field(None, description="方案ID，缺省用默认方案")
     fund_id: int = Field(..., description="基金ID")
     start_date: date = Field(..., description="起始日期")
     end_date: date = Field(..., description="结束日期")
@@ -304,6 +308,7 @@ class CashOut(BaseModel):
 
 
 class CashGenerateIn(BaseModel):
+    plan_id: Optional[int] = Field(None, description="方案ID，缺省用默认方案")
     start_date: date = Field(..., description="起始日期")
     end_date: date = Field(..., description="结束日期")
 
@@ -345,6 +350,70 @@ class QuoteOut(BaseModel):
 class QuoteListOut(BaseModel):
     quotes: list[QuoteOut]
     source: str = "tencent"
+
+
+# =========================================================
+# DcaPlan 定投方案
+# =========================================================
+
+
+class PlanFundIn(BaseModel):
+    fund_id: int = Field(..., description="基金ID")
+    target_ratio: Decimal = Field(..., ge=0, le=100, decimal_places=2, description="该方案下此标的目标占比(%)")
+
+
+class PlanCreate(BaseModel):
+    name: str = Field(..., min_length=1, max_length=64, description="方案名")
+    start_date: Optional[date] = Field(None, description="起始日期（首次定投，间隔基准）")
+    interval_days: int = Field(90, ge=1, description="定投间隔天数（如 90 = 约每季）")
+    tolerance_days: int = Field(5, ge=0, description="容错天数：下次窗口 = 基准 + 间隔 ± 容错")
+    amount: Decimal = Field(0, ge=0, decimal_places=2, description="每次投入金额")
+    rebalance_strategy: Literal["buy", "sell", "check"] = "check"
+    cash_ratio: Decimal = Field(0, ge=0, le=100, decimal_places=2, description="现金目标比例(%)")
+    active: bool = True
+    funds: list[PlanFundIn] = Field(default_factory=list, description="标的配置")
+
+
+class PlanUpdate(BaseModel):
+    name: Optional[str] = Field(None, min_length=1, max_length=64)
+    start_date: Optional[date] = None
+    interval_days: Optional[int] = Field(None, ge=1)
+    tolerance_days: Optional[int] = Field(None, ge=0)
+    amount: Optional[Decimal] = Field(None, ge=0, decimal_places=2)
+    rebalance_strategy: Optional[Literal["buy", "sell", "check"]] = None
+    cash_ratio: Optional[Decimal] = Field(None, ge=0, le=100, decimal_places=2)
+    active: Optional[bool] = None
+    funds: Optional[list[PlanFundIn]] = None
+
+
+class PlanFundOut(BaseModel):
+    fund_id: int
+    fund_code: str
+    fund_name: str
+    target_ratio: Decimal
+
+
+class PlanNextDue(BaseModel):
+    """下次定投窗口：以起始日期为基准 + k×间隔天数，窗口 = 计划日 ± 容错。"""
+
+    scheduled: date
+    window_start: date
+    window_end: date
+    status: Literal["upcoming", "due", "overdue"]
+
+
+class PlanOut(BaseModel):
+    id: int
+    name: str
+    start_date: Optional[date] = None
+    interval_days: int
+    tolerance_days: int
+    amount: Decimal
+    rebalance_strategy: str
+    cash_ratio: Decimal
+    active: bool
+    next_due: Optional[PlanNextDue] = None
+    funds: list[PlanFundOut] = Field(default_factory=list)
 
 
 # =========================================================

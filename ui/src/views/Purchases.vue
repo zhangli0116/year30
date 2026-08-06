@@ -2,7 +2,14 @@
   <el-card shadow="never">
     <template #header>
       <div class="header">
-        <span>购买记录（按季度）</span>
+        <div class="header-left">
+          <span>购买记录（按季度）</span>
+          <PlanSwitcher
+            :model-value="planId"
+            @update:model-value="planId = $event"
+            @change="onPlanChange"
+          />
+        </div>
         <div class="header-right">
           <el-select
             v-model="filterFundId"
@@ -323,9 +330,13 @@
 </template>
 
 <script setup>
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import PlanSwitcher from '../components/PlanSwitcher.vue'
 import { fundsApi, purchasesApi, quartersApi, quotesApi } from '../api'
+
+// 当前选中的定投方案：季度与购买记录都按方案过滤
+const planId = ref(null)
 
 const loading = ref(false)
 const fundOptions = ref([])
@@ -413,9 +424,10 @@ function countFor(q) {
 async function load() {
   loading.value = true
   try {
+    const pp = planId.value ? { plan_id: planId.value } : {}
     const [qData, pData, fData] = await Promise.all([
-      quartersApi.list(),
-      purchasesApi.list({ page: 1, page_size: 100 }), // 默认排除现金记录
+      quartersApi.list(pp),
+      purchasesApi.list({ page: 1, page_size: 100, ...pp }), // 默认排除现金记录
       fundsApi.list({ page: 1, page_size: 100 }),
     ])
     quartersRaw.value = qData || []
@@ -448,6 +460,11 @@ async function load() {
   } finally {
     loading.value = false
   }
+}
+
+// 方案切换：重新按该方案拉取季度与购买记录
+async function onPlanChange() {
+  await load()
 }
 
 // 修改季度预算：后端自动重算 cash_amount
@@ -559,6 +576,7 @@ async function handleSubmit() {
     type: form.type,
     quarter_id: form.quarter_id,
     fund_id: form.fund_id,
+    plan_id: planId.value,
     purchase_date: form.purchase_date,
     price: form.price,
     hands: form.hands,
@@ -601,7 +619,6 @@ async function handleDelete(row) {
   load() // 删除后季度权益/现金由后端自动重算
 }
 
-onMounted(load)
 </script>
 
 <style scoped>
@@ -609,6 +626,12 @@ onMounted(load)
   display: flex;
   justify-content: space-between;
   align-items: center;
+  gap: 12px;
+}
+.header-left {
+  display: flex;
+  align-items: center;
+  gap: 12px;
 }
 .header-right {
   display: flex;

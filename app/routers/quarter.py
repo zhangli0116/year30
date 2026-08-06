@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
 from app import crud, schemas
@@ -10,8 +10,11 @@ router = APIRouter(prefix="/api/v1/quarters", tags=["quarters"])
 
 
 @router.get("", response_model=ApiResponse[list[schemas.QuarterOut]])
-def list_quarters(db: Session = Depends(get_db)) -> ApiResponse:
-    return success(crud.quarter.list_quarters(db))
+def list_quarters(
+    plan_id: int | None = Query(None, description="方案ID，缺省返回全部方案季度"),
+    db: Session = Depends(get_db),
+) -> ApiResponse:
+    return success(crud.quarter.list_quarters(db, plan_id))
 
 
 @router.get("/{quarter_id}", response_model=ApiResponse[schemas.QuarterDetail])
@@ -26,8 +29,10 @@ def get_quarter_detail(quarter_id: int, db: Session = Depends(get_db)) -> ApiRes
 def create_quarter(
     payload: schemas.QuarterCreate, db: Session = Depends(get_db)
 ) -> ApiResponse:
-    if crud.quarter.get_quarter_by_period(db, payload.period):
-        return error(40005, f"周期 {payload.period} 已存在")
+    if crud.plan.get_plan(db, payload.plan_id) is None:
+        return error(40403, f"方案 {payload.plan_id} 不存在")
+    if crud.quarter.get_quarter_by_period(db, payload.period, payload.plan_id):
+        return error(40005, f"周期 {payload.period} 在该方案下已存在")
     quarter = crud.quarter.create_quarter(db, payload)
     logger.info(f"创建季度 {payload.period} id={quarter.id} 预算{payload.budget}")
     return success(quarter)

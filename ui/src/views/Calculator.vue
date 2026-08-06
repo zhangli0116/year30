@@ -1,5 +1,13 @@
 <template>
   <div class="calculator">
+    <div class="plan-bar">
+      <PlanSwitcher
+        :model-value="planId"
+        @update:model-value="planId = $event"
+        @change="onPlanChange"
+      />
+    </div>
+
     <el-card shadow="never">
       <template #header>
         <div class="card-header">
@@ -265,13 +273,17 @@
 </template>
 
 <script setup>
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { fundsApi, purchasesApi, quartersApi, quotesApi } from '../api'
+import PlanSwitcher from '../components/PlanSwitcher.vue'
+import { fundsApi, planApi, purchasesApi, quartersApi, quotesApi } from '../api'
 
 const router = useRouter()
 const CASH_CODE = '000000'
+
+// 当前选中的定投方案：标的与 target_ratio 取自该方案，预算默认取方案 amount
+const planId = ref(null)
 
 const budget = ref(12500)
 const feeRate = ref(0.03) // 手续费费率（%），默认 0.03
@@ -535,7 +547,7 @@ async function doSubmitQuarter() {
     const period = confirmData.period
     const rowsWithHands = view.value.arr.filter((r) => r.hands > 0)
 
-    // 1) 先建/取季度记录（避免取消时留下空季度）
+    // 1) 先建/取季度记录（避免取消时留下空季度，带 plan_id）
     let quarter = null
     try {
       quarter = await quartersApi.create({
@@ -543,10 +555,11 @@ async function doSubmitQuarter() {
         start_date: quarterDate.value,
         budget: budget.value,
         note: quarterNote.value || null,
+        plan_id: planId.value,
       })
     } catch {
-      // period 重复：匹配已有
-      const all = await quartersApi.list().catch(() => [])
+      // period 重复：匹配已有（仅在该方案内找）
+      const all = await quartersApi.list({ plan_id: planId.value }).catch(() => [])
       quarter = (all || []).find((q) => q.period === period)
       if (!quarter) {
         ElMessage.error('创建季度记录失败')
@@ -555,10 +568,11 @@ async function doSubmitQuarter() {
     }
     const quarterId = quarter.id
 
-    // 2) 批量建购买记录（带 quarter_id）
+    // 2) 批量建购买记录（带 quarter_id 与 plan_id）
     const records = rowsWithHands.map((r) => ({
       fund_id: r.fund_id,
       quarter_id: quarterId,
+      plan_id: planId.value,
       purchase_date: quarterDate.value,
       price: r.price,
       hands: r.hands,
@@ -602,38 +616,52 @@ function signedMoney(v) {
   return (n >= 0 ? '+' : '-') + abs
 }
 
-onMounted(async () => {
+// 加载当前方案：标的/占比取方案内 plan_fund，预算默认取方案 amount，
+// 现有市值/现金取该方案 summary/quarters，价格随后拉取。
+async function loadForPlan() {
+  fundRows.value = []
+  cashCurrent.value = 0
+  if (!planId.value) return
   try {
-    const [sumData, fundData, quarterData] = await Promise.all([
-      fundsApi.summary(),
-      fundsApi.list({ page: 1, page_size: 20 }),
-      quartersApi.list(),
+    const [plans, fundData, sumData, quarterData] = await Promise.all([
+      planApi.list(),
+      fundsApi.list({ page: 1, page_size: 100 }),
+      fundsApi.summary({ plan_id: planId.value }),
+      quartersApi.list({ plan_id: planId.value }),
     ])
-    const all = fundData.items || []
-    const sumMap = Object.fromEntries(
-      (sumData.funds || []).map((f) => [f.fund_id, f])
+    const plan = (plans || []).find((p) => p.id === planId.value)
+    if (plan && plan.amount != null) budget.value = Number(plan.amount)
+
+    const sumMap = Object.fromEntries((sumData.funds || []).map((f) => [f.fund_id, f]))
+    // 基金元数据兜底（方案内 fund_code/fund_name 缺失时用）
+    const metaById = Object.fromEntries(
+      (fundData.items || [])
+        .filter((f) => f.fund_code !== CASH_CODE)
+        .map((f) => [f.id, f])
     )
-    const funds = all.filter((f) => f.fund_code !== CASH_CODE)
-    funds.sort((a, b) => (b.target_ratio || 0) - (a.target_ratio || 0))
-    fundRows.value = funds.map((f) => {
-      const s = sumMap[f.id] || {}
-      return {
-        fund_id: f.id,
-        fund_code: f.fund_code,
-        fund_name: f.fund_name,
-        target_ratio: Number(f.target_ratio || 0),
-        targetPct: Number(f.target_ratio || 0),
-        price: null,
-        handPrice: null,
-        priceSource: null,
-        quote: null,
-        currentShares: Number(s.total_shares || 0),
-        currentCost: Number(s.total_cost || 0),
-        hands: 0,
-        _manual: false,
-      }
-    })
-    // 现有现金 = 各季度剩余现金之和（quarter.cash_amount）
+    const planFunds = plan?.funds || []
+    fundRows.value = planFunds
+      .filter((pf) => pf.fund_code !== CASH_CODE)
+      .map((pf) => {
+        const s = sumMap[pf.fund_id] || {}
+        const meta = metaById[pf.fund_id] || {}
+        return {
+          fund_id: pf.fund_id,
+          fund_code: pf.fund_code,
+          fund_name: pf.fund_name || meta.fund_name,
+          target_ratio: Number(pf.target_ratio || 0),
+          targetPct: Number(pf.target_ratio || 0),
+          price: null,
+          handPrice: null,
+          priceSource: null,
+          quote: null,
+          currentShares: Number(s.total_shares || 0),
+          currentCost: Number(s.total_cost || 0),
+          hands: 0,
+          _manual: false,
+        }
+      })
+    // 现有现金 = 该方案各季度剩余现金之和（quarter.cash_amount）
     cashCurrent.value = (quarterData || []).reduce(
       (s, q) => s + Number(q.cash_amount || 0),
       0
@@ -642,10 +670,18 @@ onMounted(async () => {
   } catch {
     // 接口错误在拦截器已展示
   }
-})
+}
+
+// 方案切换：重新按该方案初始化标的/预算并拉行情
+async function onPlanChange() {
+  await loadForPlan()
+}
 </script>
 
 <style scoped>
+.plan-bar {
+  margin-bottom: 16px;
+}
 .card-header {
   display: flex;
   justify-content: space-between;

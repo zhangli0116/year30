@@ -19,20 +19,24 @@ def get_quarter_with_purchases(db: Session, quarter_id: int) -> models.Quarter |
     return q
 
 
-def get_quarter_by_period(db: Session, period: str) -> models.Quarter | None:
-    return db.scalar(select(models.Quarter).where(models.Quarter.period == period))
-
-
-def list_quarters(db: Session) -> list[models.Quarter]:
-    return list(
-        db.scalars(
-            select(models.Quarter).order_by(models.Quarter.period.desc())
-        ).all()
+def get_quarter_by_period(db: Session, period: str, plan_id: int) -> models.Quarter | None:
+    return db.scalar(
+        select(models.Quarter).where(
+            models.Quarter.period == period, models.Quarter.plan_id == plan_id
+        )
     )
+
+
+def list_quarters(db: Session, plan_id: int | None = None) -> list[models.Quarter]:
+    stmt = select(models.Quarter)
+    if plan_id is not None:
+        stmt = stmt.where(models.Quarter.plan_id == plan_id)
+    return list(db.scalars(stmt.order_by(models.Quarter.period.desc())).all())
 
 
 def create_quarter(db: Session, payload: schemas.QuarterCreate) -> models.Quarter:
     quarter = models.Quarter(
+        plan_id=payload.plan_id,
         period=payload.period,
         start_date=payload.start_date,
         end_date=payload.end_date,

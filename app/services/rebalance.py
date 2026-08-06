@@ -107,55 +107,74 @@ def suggest(row: dict, total: float) -> str:
     return f"建议{action}约 ¥{abs_gap:.0f}"
 
 
-def analyze(db: Session, params: dict | None = None) -> dict:
-    """再平衡体检分析：每只基金的目标/当前占比/偏离/偏离金额/阈值/状态/建议动作 + 现金行。
+def analyze(db: Session, plan_id: int, params: dict | None = None) -> dict:
+    """再平衡体检分析：某方案下每只基金的目标/当前占比/偏离/偏离金额/阈值/状态/建议动作 + 现金行。
 
+    目标比例取该方案 plan_fund（fund_id→target），现金目标取 plan.cash_ratio；
+    份额/市值只统计该方案下的购买记录；现金余额 = Σ 该方案 quarter.cash_amount。
     状态与建议动作都在后端统一计算（单一来源，便于后续接入大模型分析）。
     """
     from app.services.xirr import _funds_with_shares
 
     params = params if params is not None else get_params(db)
-    funds = [f for f in crud.fund.list_funds(db, 1, 100)[0] if f.fund_code != "000000"]
-    target_map = {
-        f.id: float(f.target_ratio) if f.target_ratio is not None else None
-        for f in funds
-    }
-    # 现金目标比例：现金基金 target_ratio，缺失时 100 − Σ基金目标
-    cash_fund = db.scalar(
-        select(models.Fund).where(models.Fund.fund_code == "000000")
-    )
-    if cash_fund is not None and cash_fund.target_ratio is not None:
-        cash_target = float(cash_fund.target_ratio)
-    else:
-        cash_target = max(
-            0.0, 100.0 - sum(t for t in target_map.values() if t is not None)
-        )
+    plan = db.get(models.DcaPlan, plan_id)
+    if plan is None:
+        raise ValueError(f"方案 {plan_id} 不存在")
+    # 现金目标比例：方案显式 cash_ratio（落实不满仓，Σ标的+现金=100）
+    cash_target = float(plan.cash_ratio)
 
-    funds_info = _funds_with_shares(db)
-    prices = _prices_for_funds(db, [f["fund_code"] for f in funds_info])
-    quarters = crud.quarter.list_quarters(db)
+    # 方案配置的标的（含无持仓的，新方案也能看到目标占比）
+    plan_funds = db.execute(
+        select(
+            models.Fund.id, models.Fund.fund_code, models.Fund.fund_name,
+            models.PlanFund.target_ratio,
+        )
+        .join(models.PlanFund, models.PlanFund.fund_id == models.Fund.id)
+        .where(models.PlanFund.plan_id == plan_id)
+        .order_by(models.Fund.fund_code)
+    ).all()
+    funds_info = _funds_with_shares(db, plan_id)
+    extra_codes = [
+        f["fund_code"]
+        for f in funds_info
+        if f["fund_id"] not in {x[0] for x in plan_funds}
+    ]
+    prices = _prices_for_funds(db, [x[1] for x in plan_funds] + extra_codes)
+    quarters = crud.quarter.list_quarters(db, plan_id)
     cash = sum(float(q.cash_amount or 0) for q in quarters)
 
+    share_map = {f["fund_id"]: f["total_shares"] for f in funds_info}
+    # 合并：方案配置标的优先，另加"有持仓但不在配置中"的（防御）
+    fund_defs: list[tuple[int, str, str, float | None]] = [
+        (x[0], x[1], x[2], float(x[3])) for x in plan_funds
+    ]
+    seen_ids = {x[0] for x in fund_defs}
+    for f in funds_info:
+        if f["fund_id"] not in seen_ids:
+            fund_defs.append((f["fund_id"], f["fund_code"], f["fund_name"], None))
+
     mvs: dict[int, float] = {
-        f["fund_id"]: f["total_shares"] * prices.get(f["fund_code"], 0.0)
-        for f in funds_info
+        fid: share_map.get(fid, 0) * prices.get(code, 0.0)
+        for fid, code, _, _ in fund_defs
     }
     total = sum(mvs.values()) + cash
 
+    # 金额底线只对"已有组合"生效；新方案 total=0 时按纯比例判定（应显示低配需买入）
+    dev_amount = lambda d: (round(d / 100 * total, 2) if total > 0 else None)
+
     fund_rows = []
-    for f in funds_info:
-        target = target_map.get(f["fund_id"])
-        real = (mvs[f["fund_id"]] / total * 100) if total > 0 else 0.0
+    for fid, fcode, fname, target in fund_defs:
+        real = (mvs[fid] / total * 100) if total > 0 else 0.0
         deviation = real - target if target is not None else 0.0
         row = {
-            "fund_id": f["fund_id"],
-            "fund_code": f["fund_code"],
-            "fund_name": f["fund_name"],
-            "price": prices.get(f["fund_code"]),
+            "fund_id": fid,
+            "fund_code": fcode,
+            "fund_name": fname,
+            "price": prices.get(fcode),
             "target": round(target, 2) if target is not None else None,
             "real": round(real, 2),
             "deviation": round(deviation, 2),
-            "deviation_amount": round(deviation / 100 * total, 2),
+            "deviation_amount": dev_amount(deviation),
             "threshold": (
                 round(threshold_for(target, params), 2) if target is not None else None
             ),
@@ -165,7 +184,9 @@ def analyze(db: Session, params: dict | None = None) -> dict:
             if row["threshold"] is not None
             else "normal"
         )
-        row["suggestion"] = suggest(row, total)
+        row["suggestion"] = (
+            "尚未开始定投，请按方案执行" if total <= 0 else suggest(row, total)
+        )
         fund_rows.append(row)
 
     cash_real = (cash / total * 100) if total > 0 else 0.0
@@ -174,13 +195,17 @@ def analyze(db: Session, params: dict | None = None) -> dict:
         "target": round(cash_target, 2),
         "real": round(cash_real, 2),
         "deviation": round(cash_deviation, 2),
-        "deviation_amount": round(cash_deviation / 100 * total, 2),
+        "deviation_amount": dev_amount(cash_deviation),
         "threshold": round(threshold_for(cash_target, params), 2),
     }
     cash_row["status"] = judge(
         cash_deviation, cash_row["threshold"], params["amount_floor"], cash_row["deviation_amount"]
     )
-    cash_row["suggestion"] = suggest({**cash_row, "fund_code": "000000"}, total)
+    cash_row["suggestion"] = (
+        "尚未开始定投，请按方案执行"
+        if total <= 0
+        else suggest({**cash_row, "fund_code": "000000"}, total)
+    )
 
     return {
         "params": params,

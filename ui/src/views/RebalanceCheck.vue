@@ -1,5 +1,13 @@
 <template>
   <div class="rebalance-check">
+    <div class="plan-bar">
+      <PlanSwitcher
+        :model-value="planId"
+        @update:model-value="planId = $event"
+        @change="onPlanChange"
+      />
+    </div>
+
     <!-- 判定参数 -->
     <el-card shadow="never" class="cfg-card">
       <template #header>
@@ -127,13 +135,17 @@
 </template>
 
 <script setup>
-import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { computed, reactive, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
+import PlanSwitcher from '../components/PlanSwitcher.vue'
 import { rebalanceApi } from '../api'
 
 const router = useRouter()
 const DEFAULTS = { r_band: 15, min_abs: 1, max_abs: 3, amount_floor: 300 }
+
+// 当前选中的定投方案
+const planId = ref(null)
 
 const loading = ref(false)
 const saving = ref(false)
@@ -158,19 +170,29 @@ const deviatingCount = computed(
 
 let loadedKey = null // 最近一次生效的参数快照，用于预览去重
 
-// 初始/刷新：取保存参数 + 分析结果
+// 方案内参数：check 时带 plan_id
+function planParams() {
+  return planId.value ? { plan_id: planId.value } : {}
+}
+
+// 初始/刷新：取保存参数 + 分析结果（按当前方案）
 async function load() {
   loading.value = true
   try {
-    const d = await rebalanceApi.check()
+    const d = await rebalanceApi.check(planParams())
     data.value = d
-    loadedKey = JSON.stringify(d.params)
+    loadedKey = JSON.stringify({ ...d.params, plan_id: planId.value })
     Object.assign(cfg, d.params)
   } catch {
     // 拦截器已提示
   } finally {
     loading.value = false
   }
+}
+
+// 方案切换：重新加载分析结果
+async function onPlanChange() {
+  await load()
 }
 
 // 参数变化时用「未保存的参数」向后端做预览（后端统一判定，不落库）
@@ -181,11 +203,11 @@ watch(cfg, () => {
 }, { deep: true })
 
 async function preview() {
-  const key = JSON.stringify({ ...cfg })
+  const key = JSON.stringify({ ...cfg, plan_id: planId.value })
   if (key === loadedKey) return // 与生效参数一致，无需刷新
   loading.value = true
   try {
-    data.value = await rebalanceApi.check({ ...cfg })
+    data.value = await rebalanceApi.check({ ...cfg, ...planParams() })
   } catch {
     // 拦截器已提示
   } finally {
@@ -262,10 +284,12 @@ function money(v) {
   })
 }
 
-onMounted(load)
 </script>
 
 <style scoped>
+.plan-bar {
+  margin-bottom: 16px;
+}
 .cfg-card {
   margin-bottom: 16px;
 }

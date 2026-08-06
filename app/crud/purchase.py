@@ -17,12 +17,15 @@ def list_purchases(
     page: int,
     page_size: int,
     fund_id: int | None = None,
+    plan_id: int | None = None,
     start_date: date | None = None,
     end_date: date | None = None,
     exclude_cash: bool = True,
 ) -> tuple[list[models.PurchaseRecord], int]:
-    """购买记录列表；默认排除现金基金(000000)的记录，现金已由 quarter 表承载。"""
+    """购买记录列表；plan_id 提供时按方案过滤；默认排除现金基金(000000)的记录，现金已由 quarter 表承载。"""
     stmt = select(models.PurchaseRecord)
+    if plan_id is not None:
+        stmt = stmt.where(models.PurchaseRecord.plan_id == plan_id)
     if exclude_cash:
         cash_fund_id = db.scalar(
             select(models.Fund.id).where(models.Fund.fund_code == "000000")

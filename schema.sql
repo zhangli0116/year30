@@ -14,7 +14,41 @@ CREATE DATABASE fund_invest
 USE fund_invest;
 
 -- --------------------------------------------------
--- 表 1：基金维度表 —— 存放你长期持有的基金标的
+-- 表 1：定投方案表 —— 一次定投的定义（节奏/金额/标的比例/现金比例/再平衡策略）
+-- --------------------------------------------------
+CREATE TABLE dca_plan (
+    id                 INT UNSIGNED   NOT NULL AUTO_INCREMENT COMMENT '主键ID',
+    name               VARCHAR(64)    NOT NULL COMMENT '方案名，如 稳健季定投',
+    `interval`         VARCHAR(16)    NOT NULL DEFAULT 'quarterly' COMMENT '定投间隔：weekly/monthly/quarterly',
+    amount             DECIMAL(14,2)  NOT NULL DEFAULT 0.00 COMMENT '每次投入金额',
+    rebalance_strategy VARCHAR(16)    NOT NULL DEFAULT 'check' COMMENT '再平衡策略：buy(买入式)/sell(卖出式)/check(偏离分析)',
+    cash_ratio         DECIMAL(5,2)   NOT NULL DEFAULT 0.00 COMMENT '现金目标比例(%)，方案内 Σ标的+现金=100',
+    active             TINYINT(1)     NOT NULL DEFAULT 1 COMMENT '是否启用',
+    created_at         DATETIME       NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    updated_at         DATETIME       NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+    PRIMARY KEY (id),
+    UNIQUE KEY uk_name (name)
+) ENGINE = InnoDB COMMENT = '定投方案表';
+
+-- --------------------------------------------------
+-- 表 2：方案-标的配置表 —— 某方案下每只基金的占比
+-- --------------------------------------------------
+CREATE TABLE plan_fund (
+    id           INT UNSIGNED   NOT NULL AUTO_INCREMENT COMMENT '主键ID',
+    plan_id      INT UNSIGNED   NOT NULL COMMENT '方案ID -> dca_plan.id',
+    fund_id      INT UNSIGNED   NOT NULL COMMENT '基金ID -> fund.id',
+    target_ratio DECIMAL(5,2)   NOT NULL COMMENT '该方案下此标的目标占比(%)',
+    created_at   DATETIME       NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    PRIMARY KEY (id),
+    UNIQUE KEY uk_plan_fund (plan_id, fund_id),
+    CONSTRAINT fk_pf_plan FOREIGN KEY (plan_id) REFERENCES dca_plan (id)
+        ON UPDATE CASCADE ON DELETE CASCADE,
+    CONSTRAINT fk_pf_fund FOREIGN KEY (fund_id) REFERENCES fund (id)
+        ON UPDATE CASCADE ON DELETE CASCADE
+) ENGINE = InnoDB COMMENT = '方案-标的配置';
+
+-- --------------------------------------------------
+-- 表 3：基金维度表 —— 存放你长期持有的基金标的
 -- --------------------------------------------------
 CREATE TABLE fund (
     id          INT UNSIGNED    NOT NULL AUTO_INCREMENT COMMENT '主键ID',
@@ -22,36 +56,40 @@ CREATE TABLE fund (
     fund_name   VARCHAR(64)     NOT NULL COMMENT '基金名称，如 标普500ETF',
     exchange    VARCHAR(16)     NOT NULL DEFAULT '上交所' COMMENT '上市交易所：上交所/深交所',
     currency    CHAR(3)         NOT NULL DEFAULT 'CNY' COMMENT '币种',
-    target_ratio DECIMAL(5,2)   NULL COMMENT '目标配置比例(%)，如 20.00；NULL 表示未设置',
+    target_ratio DECIMAL(5,2)   NULL COMMENT '(已弃用) 目标比例改由 plan_fund 承载',
     created_at  DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
     PRIMARY KEY (id),
     UNIQUE KEY uk_fund_code (fund_code)
 ) ENGINE = InnoDB COMMENT = '指数基金基本信息';
 
 -- --------------------------------------------------
--- 表 2：季度汇总表 —— 每次定投一条汇总记录
+-- 表 4：定投周期汇总表 —— 某方案每一期投入一条
 -- --------------------------------------------------
 CREATE TABLE quarter (
     id              INT UNSIGNED    NOT NULL AUTO_INCREMENT COMMENT '主键ID',
+    plan_id         INT UNSIGNED    NOT NULL COMMENT '方案ID -> dca_plan.id',
     period          VARCHAR(10)     NOT NULL COMMENT '周期标识，如 2026Q3',
     start_date      DATE            NULL COMMENT '周期开始日期',
     end_date        DATE            NULL COMMENT '周期结束日期',
     budget          DECIMAL(14,2)   NOT NULL DEFAULT 0.00 COMMENT '本周期预算，如 12500',
     equity_amount   DECIMAL(14,2)   NOT NULL DEFAULT 0.00 COMMENT '权益投入(本金，不含手续费)',
-    total_fee       DECIMAL(14,2)   NOT NULL DEFAULT 0.00 COMMENT '本季度手续费总额',
+    total_fee       DECIMAL(14,2)   NOT NULL DEFAULT 0.00 COMMENT '本周期手续费总额',
     cash_amount     DECIMAL(14,2)   NOT NULL DEFAULT 0.00 COMMENT '剩余现金 = budget - equity_amount - total_fee',
     note            VARCHAR(255)    NULL COMMENT '备注，如 2026Q3 定投',
     created_at      DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
     updated_at      DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
     PRIMARY KEY (id),
-    UNIQUE KEY uk_period (period)
-) ENGINE = InnoDB COMMENT = '季度定投汇总表';
+    UNIQUE KEY uk_plan_period (plan_id, period),
+    CONSTRAINT fk_quarter_plan FOREIGN KEY (plan_id) REFERENCES dca_plan (id)
+        ON UPDATE CASCADE ON DELETE CASCADE
+) ENGINE = InnoDB COMMENT = '定投周期汇总表';
 
 -- --------------------------------------------------
--- 表 3：购买记录表 —— 每次定投一条记录，明细归属于某季度
+-- 表 5：购买记录表 —— 每次定投一条记录，明细归属于某方案某周期
 -- --------------------------------------------------
 CREATE TABLE purchase_record (
     id              INT UNSIGNED    NOT NULL AUTO_INCREMENT COMMENT '主键ID',
+    plan_id         INT UNSIGNED    NOT NULL COMMENT '所属方案ID -> dca_plan.id',
     quarter_id      INT UNSIGNED    NULL     COMMENT '关联季度汇总表 -> quarter.id',
     fund_id         INT UNSIGNED    NOT NULL COMMENT '基金ID -> fund.id',
     purchase_date   DATE            NOT NULL COMMENT '购买日期（如 2026-04-02）',
@@ -64,7 +102,10 @@ CREATE TABLE purchase_record (
     created_at      DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '记录创建时间',
     PRIMARY KEY (id),
     KEY idx_fund_date (fund_id, purchase_date),
+    KEY idx_plan_id (plan_id),
     KEY idx_quarter_id (quarter_id),
+    CONSTRAINT fk_purchase_plan FOREIGN KEY (plan_id) REFERENCES dca_plan (id)
+        ON UPDATE CASCADE ON DELETE CASCADE,
     CONSTRAINT fk_purchase_fund FOREIGN KEY (fund_id) REFERENCES fund (id)
         ON UPDATE CASCADE ON DELETE RESTRICT,
     CONSTRAINT fk_purchase_quarter FOREIGN KEY (quarter_id) REFERENCES quarter (id)
@@ -93,10 +134,11 @@ CREATE TABLE fund_price (
 ) ENGINE = InnoDB COMMENT = '基金历史日线价格';
 
 -- --------------------------------------------------
--- 表 5：基金每日权益流水（按天累计持有份额 × 当日收盘价）
+-- 表 6：基金每日权益流水（按天累计持有份额 × 当日收盘价，按方案拆分）
 -- --------------------------------------------------
 CREATE TABLE fund_holding_daily (
     id            INT UNSIGNED   NOT NULL AUTO_INCREMENT COMMENT '主键ID',
+    plan_id       INT UNSIGNED   NOT NULL COMMENT '方案ID -> dca_plan.id',
     fund_id       INT UNSIGNED   NOT NULL COMMENT '基金ID -> fund.id',
     trade_date    DATE           NOT NULL COMMENT '交易日',
     total_shares  INT UNSIGNED   NOT NULL COMMENT '当日累计持有份数（买+卖-）',
@@ -105,25 +147,30 @@ CREATE TABLE fund_holding_daily (
     equity_amount DECIMAL(14,2)  NOT NULL COMMENT '当日权益金额 = 份数 × 价格',
     created_at    DATETIME       NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '记录创建时间',
     PRIMARY KEY (id),
-    UNIQUE KEY uk_fund_date (fund_id, trade_date),
-    KEY idx_fund (fund_id),
+    UNIQUE KEY uk_plan_fund_date (plan_id, fund_id, trade_date),
+    KEY idx_plan_fund (plan_id, fund_id),
+    CONSTRAINT fk_holding_plan FOREIGN KEY (plan_id) REFERENCES dca_plan (id)
+        ON UPDATE CASCADE ON DELETE CASCADE,
     CONSTRAINT fk_holding_fund FOREIGN KEY (fund_id) REFERENCES fund (id)
         ON UPDATE CASCADE ON DELETE CASCADE
-) ENGINE = InnoDB COMMENT = '基金每日权益流水';
+) ENGINE = InnoDB COMMENT = '基金每日权益流水（按方案）';
 
 -- --------------------------------------------------
--- 表 6：每日现金流量表（日历日累计现金余额）
--- 增量 = 季度预算入账(+budget) − 买入支出(−buy total_amount，含费) + 卖出回笼(+sell total_amount) − 卖出手续费(−sell fee)
+-- 表 7：每日现金流量表（日历日累计现金余额，按方案拆分）
+-- 增量 = 方案周期预算入账(+budget) − 买入支出(−buy total_amount，含费) + 卖出回笼(+sell total_amount) − 卖出手续费(−sell fee)
 -- --------------------------------------------------
 CREATE TABLE fund_cash_daily (
     id          INT UNSIGNED   NOT NULL AUTO_INCREMENT COMMENT '主键ID',
+    plan_id     INT UNSIGNED   NOT NULL COMMENT '方案ID -> dca_plan.id',
     trade_date  DATE           NOT NULL COMMENT '日期（日历日，含周末）',
     increment   DECIMAL(14,2)  NOT NULL DEFAULT 0.00 COMMENT '当日现金增量',
     cash_amount DECIMAL(14,2)  NOT NULL DEFAULT 0.00 COMMENT '当日累计现金余额',
     created_at  DATETIME       NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '记录创建时间',
     PRIMARY KEY (id),
-    UNIQUE KEY uk_date (trade_date)
-) ENGINE = InnoDB COMMENT = '每日现金流量表';
+    UNIQUE KEY uk_plan_date (plan_id, trade_date),
+    CONSTRAINT fk_cash_plan FOREIGN KEY (plan_id) REFERENCES dca_plan (id)
+        ON UPDATE CASCADE ON DELETE CASCADE
+) ENGINE = InnoDB COMMENT = '每日现金流量表（按方案）';
 
 -- --------------------------------------------------
 -- 表 7：系统键值配置（如再平衡判定阈值）

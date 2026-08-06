@@ -16,13 +16,14 @@ def list_purchases(
     page: int = Query(1, ge=1, description="页码，从 1 开始"),
     page_size: int = Query(10, ge=1, le=100, description="每页条数"),
     fund_id: int | None = Query(None, description="按基金筛选"),
+    plan_id: int | None = Query(None, description="按方案筛选"),
     start_date: date | None = Query(None, description="开始日期（含）"),
     end_date: date | None = Query(None, description="结束日期（含）"),
     exclude_cash: bool = Query(True, description="默认排除现金基金(000000)记录"),
     db: Session = Depends(get_db),
 ) -> ApiResponse:
     items, total = crud.purchase.list_purchases(
-        db, page, page_size, fund_id, start_date, end_date, exclude_cash
+        db, page, page_size, fund_id, plan_id, start_date, end_date, exclude_cash
     )
     return success(PageData(items=items, total=total, page=page, page_size=page_size))
 
@@ -31,6 +32,8 @@ def list_purchases(
 def create_purchase(
     payload: schemas.PurchaseCreate, db: Session = Depends(get_db)
 ) -> ApiResponse:
+    if crud.plan.get_plan(db, payload.plan_id) is None:
+        return error(40403, f"方案 {payload.plan_id} 不存在")
     if crud.fund.get_fund(db, payload.fund_id) is None:
         return error(40003, f"基金 {payload.fund_id} 不存在")
     record = crud.purchase.create_purchase(db, payload)
@@ -46,6 +49,8 @@ def create_purchases_batch(
     if not payload:
         return error(40000, "记录列表不能为空")
     for p in payload:
+        if crud.plan.get_plan(db, p.plan_id) is None:
+            return error(40403, f"方案 {p.plan_id} 不存在")
         if crud.fund.get_fund(db, p.fund_id) is None:
             return error(40003, f"基金 {p.fund_id} 不存在")
     records = crud.purchase.create_purchases(db, payload)

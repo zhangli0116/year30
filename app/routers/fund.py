@@ -21,8 +21,11 @@ def list_funds(
 
 # 注意：/summary 必须声明在 /{fund_id} 之前，否则会被当作 fund_id 解析
 @router.get("/summary", response_model=ApiResponse[schemas.SummaryOut])
-def summarize_funds(db: Session = Depends(get_db)) -> ApiResponse:
-    return success(crud.fund.summarize_funds(db))
+def summarize_funds(
+    plan_id: int | None = Query(None, description="方案ID，缺省返回全账户汇总"),
+    db: Session = Depends(get_db),
+) -> ApiResponse:
+    return success(crud.fund.summarize_funds(db, plan_id))
 
 
 @router.post("", response_model=ApiResponse[schemas.FundOut])

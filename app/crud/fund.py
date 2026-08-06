@@ -84,13 +84,30 @@ def get_fund_with_purchases(db: Session, fund_id: int) -> models.Fund | None:
     return fund
 
 
-def summarize_funds(db: Session) -> dict:
-    """按基金汇总统计，并计算配置比例。
+def summarize_funds(db: Session, plan_id: int | None = None) -> dict:
+    """按方案汇总基金统计，并计算配置比例。
 
-    现金目标比例 = 100 − 各基金目标比例之和；
-    总资金 = 累计投入 ÷ (目标占比之和 ÷ 100)；
-    真实比例 = 基金累计投入 ÷ 总资金 × 100。
+    plan_id 提供时：
+        - 目标比例取 plan_fund（方案内 Σ+现金=100）
+        - 现金目标比例取 plan.cash_ratio（显式，落实不满仓）
+        - 份额/成本只统计该方案下的购买记录（基金可跨方案，按方案拆分）
+    未提供 plan_id（兼容）时回退旧逻辑：fund.target_ratio + 100−Σ。
     """
+    # 方案目标配置
+    plan = db.get(models.DcaPlan, plan_id) if plan_id else None
+    target_map: dict[int, Decimal] = {}
+    plan_cash_ratio: Decimal | None = None
+    if plan is not None:
+        for pf in db.scalars(
+            select(models.PlanFund).where(models.PlanFund.plan_id == plan.id)
+        ).all():
+            target_map[pf.fund_id] = pf.target_ratio
+        plan_cash_ratio = plan.cash_ratio
+
+    join_cond = models.PurchaseRecord.fund_id == models.Fund.id
+    if plan is not None:
+        join_cond = join_cond & (models.PurchaseRecord.plan_id == plan.id)
+
     rows = db.execute(
         select(
             models.Fund.id.label("fund_id"),
@@ -124,10 +141,7 @@ def summarize_funds(db: Session) -> dict:
                 )
             ).label("total_cost"),
         )
-        .outerjoin(
-            models.PurchaseRecord,
-            models.PurchaseRecord.fund_id == models.Fund.id,
-        )
+        .outerjoin(models.PurchaseRecord, join_cond)
         .group_by(
             models.Fund.id,
             models.Fund.fund_code,
@@ -146,9 +160,11 @@ def summarize_funds(db: Session) -> dict:
         total_shares = int(row.total_shares or 0)
         total_cost = row.total_cost or Decimal("0")
         total_invested += total_cost
-        if row.target_ratio is not None:
+        # 目标比例：方案内用 plan_fund；否则回退基金表
+        target = target_map.get(row.fund_id, row.target_ratio)
+        if target is not None:
             has_target = True
-            invested_target += row.target_ratio
+            invested_target += target
         avg_cost = None
         if total_shares:
             avg_cost = (total_cost / total_shares).quantize(Decimal("0.0001"))
@@ -161,27 +177,29 @@ def summarize_funds(db: Session) -> dict:
                 "total_shares": total_shares,
                 "total_cost": total_cost,
                 "avg_cost": avg_cost,
-                "target_ratio": row.target_ratio,
+                "target_ratio": target,
                 "real_ratio": None,
             }
         )
 
     cash_ratio = None
     total_capital = None
-    if has_target and invested_target > 0:
-        # 目标比例之和达到 100% 时，全部资金由基金（含现金基金）表示，无独立现金桶
+    if plan_cash_ratio is not None:
+        cash_ratio = plan_cash_ratio.quantize(Decimal("0.01"))
+        invested_target = (Decimal("100") - plan_cash_ratio).quantize(Decimal("0.01"))
+    elif has_target and invested_target > 0:
         if invested_target < Decimal("100"):
             cash_ratio = max(Decimal("0"), Decimal("100") - invested_target).quantize(
                 Decimal("0.01")
             )
-        if total_invested > 0:
-            raw_capital = total_invested / (invested_target / Decimal("100"))
-            total_capital = raw_capital.quantize(Decimal("0.01"))
-            for f in funds:
-                if f["total_cost"] > 0:
-                    f["real_ratio"] = (
-                        f["total_cost"] / raw_capital * Decimal("100")
-                    ).quantize(Decimal("0.01"))
+    if invested_target > 0 and total_invested > 0:
+        raw_capital = total_invested / (invested_target / Decimal("100"))
+        total_capital = raw_capital.quantize(Decimal("0.01"))
+        for f in funds:
+            if f["total_cost"] > 0:
+                f["real_ratio"] = (
+                    f["total_cost"] / raw_capital * Decimal("100")
+                ).quantize(Decimal("0.01"))
 
     return {
         "funds": funds,

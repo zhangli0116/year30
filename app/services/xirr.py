@@ -145,12 +145,17 @@ def _price_map(db: Session, codes: list[str]) -> dict[str, float]:
     return prices
 
 
-def _funds_with_shares(db: Session) -> list[dict]:
+def _funds_with_shares(db: Session, plan_id: int | None = None) -> list[dict]:
     """每只有购买记录的真实基金：代码/名称/累计份额（买入−卖出，排除现金基金）。
 
+    plan_id 提供时只统计该方案下的购买记录；None 回退全账户（兼容旧行为）。
     已全部卖出的基金（份额=0）也保留——其收益已由卖出现金流体现。
     """
     from sqlalchemy import case, func
+
+    join_cond = models.PurchaseRecord.fund_id == models.Fund.id
+    if plan_id is not None:
+        join_cond = join_cond & (models.PurchaseRecord.plan_id == plan_id)
 
     rows = db.execute(
         select(
@@ -175,9 +180,7 @@ def _funds_with_shares(db: Session) -> list[dict]:
             ).label("total_shares"),
             func.count(models.PurchaseRecord.id).label("rec_count"),
         )
-        .outerjoin(
-            models.PurchaseRecord, models.PurchaseRecord.fund_id == models.Fund.id
-        )
+        .outerjoin(models.PurchaseRecord, join_cond)
         .where(models.Fund.fund_code != "000000")
         .group_by(models.Fund.id, models.Fund.fund_code, models.Fund.fund_name)
         .having(func.count(models.PurchaseRecord.id) > 0)
@@ -194,11 +197,18 @@ def _funds_with_shares(db: Session) -> list[dict]:
     ]
 
 
-def account_xirr(db: Session, prices: dict[str, float] | None = None) -> dict:
-    """全账户资金加权年化：预算到账为投入，今日总资产（权益市值+现金）为终值。"""
+def account_xirr(
+    db: Session,
+    plan_id: int | None = None,
+    prices: dict[str, float] | None = None,
+) -> dict:
+    """全账户资金加权年化：预算到账为投入，今日总资产（权益市值+现金）为终值。
+
+    plan_id 提供时按方案统计（该方案季度预算 + 该方案购买记录）；None 回退全账户。
+    """
     from app import crud
 
-    quarters = crud.quarter.list_quarters(db)
+    quarters = crud.quarter.list_quarters(db, plan_id)
     flows: list[tuple[date, float]] = []
     invested = 0.0
     start_date: date | None = None
@@ -221,7 +231,7 @@ def account_xirr(db: Session, prices: dict[str, float] | None = None) -> dict:
         invested += float(q.budget)
         start_date = flow_date if start_date is None else min(start_date, flow_date)
 
-    funds = _funds_with_shares(db)
+    funds = _funds_with_shares(db, plan_id)
     if prices is None:
         codes = [f["fund_code"] for f in funds]
         prices = _price_map(db, codes) if codes else {}
@@ -255,18 +265,20 @@ def account_xirr(db: Session, prices: dict[str, float] | None = None) -> dict:
     }
 
 
-def fund_xirr(db: Session, fund_id: int, price: float | None = None) -> dict:
-    """单基金资金加权年化：买卖现金流 + 期末市值。"""
+def fund_xirr(
+    db: Session,
+    fund_id: int,
+    plan_id: int | None = None,
+    price: float | None = None,
+) -> dict:
+    """单基金资金加权年化：买卖现金流 + 期末市值（可按方案过滤）。"""
     fund = db.get(models.Fund, fund_id)
     if fund is None:
         return {"fund_id": fund_id, "xirr": None, "current_mv": 0.0, "invested": 0.0, "flows_count": 0}
-    records = list(
-        db.scalars(
-            select(models.PurchaseRecord)
-            .where(models.PurchaseRecord.fund_id == fund_id)
-            .order_by(models.PurchaseRecord.purchase_date)
-        ).all()
-    )
+    stmt = select(models.PurchaseRecord).where(models.PurchaseRecord.fund_id == fund_id)
+    if plan_id is not None:
+        stmt = stmt.where(models.PurchaseRecord.plan_id == plan_id)
+    records = list(db.scalars(stmt.order_by(models.PurchaseRecord.purchase_date)).all())
     flows: list[tuple[date, float]] = []
     invested = 0.0
     shares = 0

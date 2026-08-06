@@ -11,19 +11,23 @@ HANDS = 100  # 每手份数
 
 def generate(
     db: Session,
+    plan_id: int,
     fund_id: int,
     start_date: date,
     end_date: date,
+    only_missing: bool = False,
 ) -> int:
-    """按天生成权益流水：某基金在 [start, end] 内，每天累计持有份额 × 当日收盘价。
+    """按天生成权益流水：某方案某基金在 [start, end] 内，每天累计持有份额 × 当日收盘价。
 
-    - 累计份额 = Σ(买入 hand×份/手 − 卖出 hand×份/手)，按购买日期 ≤ 当日累计
+    - 累计份额 = Σ(该方案下买入 hand×份/手 − 卖出 hand×份/手)，按购买日期 ≤ 当日累计
     - 价格取 fund_price 当日收盘价（仅有交易日才生成行）
+    - only_missing=True 时跳过已有日期（增量补缺失，不覆盖存量）
     """
     purchases = list(
         db.scalars(
             select(models.PurchaseRecord)
             .where(
+                models.PurchaseRecord.plan_id == plan_id,
                 models.PurchaseRecord.fund_id == fund_id,
                 models.PurchaseRecord.purchase_date <= end_date,
             )
@@ -47,7 +51,10 @@ def generate(
     existing = {
         h.trade_date: h
         for h in db.scalars(
-            select(models.FundHoldingDaily).where(models.FundHoldingDaily.fund_id == fund_id)
+            select(models.FundHoldingDaily).where(
+                models.FundHoldingDaily.plan_id == plan_id,
+                models.FundHoldingDaily.fund_id == fund_id,
+            )
         ).all()
     }
 
@@ -65,9 +72,13 @@ def generate(
         price = bar.close_price
         equity = (Decimal(total_shares) * price).quantize(Decimal("0.01"))
 
+        if only_missing and bar.trade_date in existing:
+            continue  # 增量模式：跳过已有日期，只补缺失
         row = existing.get(bar.trade_date)
         if row is None:
-            row = models.FundHoldingDaily(fund_id=fund_id, trade_date=bar.trade_date)
+            row = models.FundHoldingDaily(
+                plan_id=plan_id, fund_id=fund_id, trade_date=bar.trade_date
+            )
             db.add(row)
         row.total_shares = total_shares
         row.total_hands = total_hands
@@ -80,6 +91,7 @@ def generate(
 
 def list_holdings(
     db: Session,
+    plan_id: int,
     fund_id: int,
     start_date: date,
     end_date: date,
@@ -88,6 +100,7 @@ def list_holdings(
         db.scalars(
             select(models.FundHoldingDaily)
             .where(
+                models.FundHoldingDaily.plan_id == plan_id,
                 models.FundHoldingDaily.fund_id == fund_id,
                 models.FundHoldingDaily.trade_date >= start_date,
                 models.FundHoldingDaily.trade_date <= end_date,
@@ -99,6 +112,7 @@ def list_holdings(
 
 def check_missing(
     db: Session,
+    plan_id: int,
     fund_id: int,
     start_date: date,
     end_date: date,
@@ -116,6 +130,7 @@ def check_missing(
     holding_dates = set(
         db.scalars(
             select(models.FundHoldingDaily.trade_date).where(
+                models.FundHoldingDaily.plan_id == plan_id,
                 models.FundHoldingDaily.fund_id == fund_id,
                 models.FundHoldingDaily.trade_date >= start_date,
                 models.FundHoldingDaily.trade_date <= end_date,

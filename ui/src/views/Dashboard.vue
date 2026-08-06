@@ -1,5 +1,13 @@
 <template>
   <div class="dashboard">
+    <div class="plan-bar">
+      <PlanSwitcher
+        :model-value="planId"
+        @update:model-value="planId = $event"
+        @change="onPlanChange"
+      />
+    </div>
+
     <el-row :gutter="16" class="cards">
       <el-col :span="6">
         <el-card shadow="hover">
@@ -111,19 +119,27 @@
               :show-text="false"
             />
             <div
-              v-if="row.target_ratio != null"
+              v-if="row.target != null"
               class="rb-marker"
               :style="{ left: rbMarkerLeft(row) }"
-              :title="`目标 ${Number(row.target_ratio).toFixed(1)}%`"
+              :title="`目标 ${Number(row.target).toFixed(1)}%`"
             ></div>
           </div>
           <div class="rb-text">
-            {{ row.realRatio == null ? '—' : row.realRatio.toFixed(1) + '%' }}
-            <span class="muted">/ 目标 {{ row.target_ratio == null ? '—' : Number(row.target_ratio).toFixed(1) + '%' }}</span>
+            <span>
+              {{ row.real == null ? '—' : row.real.toFixed(1) + '%' }}
+              <span class="muted">/ 目标 {{ row.target == null ? '—' : Number(row.target).toFixed(1) + '%' }}</span>
+            </span>
+            <span class="rb-dev" :class="row.status === 'normal' ? 'muted' : row.status === 'above' ? 'up' : 'down'">
+              偏离 {{ signedPct(row.deviation) }}
+              <span class="muted">（相对 {{ relDev(row) }}）</span>
+            </span>
           </div>
-          <el-tag size="small" effect="plain" :type="rbTagType(row)">{{ rbSuggestion(row) }}</el-tag>
+          <el-tag size="small" effect="plain" :type="rbTagType(row)" :title="row.suggestion">
+            {{ rbStatusText(row) }}
+          </el-tag>
         </div>
-        <div v-if="!rbRows.length" class="muted">暂无持仓</div>
+        <div v-if="!rbRows.length" class="muted">暂无再平衡数据</div>
       </div>
     </el-card>
 
@@ -232,15 +248,19 @@
 </template>
 
 <script setup>
-import { computed, onMounted, ref } from 'vue'
+import { computed, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import QuarterChart from '../components/QuarterChart.vue'
 import TotalEquityChart from '../components/TotalEquityChart.vue'
+import PlanSwitcher from '../components/PlanSwitcher.vue'
 import { fundsApi, purchasesApi, quartersApi, quotesApi, rebalanceApi, syncApi, xirrApi } from '../api'
 import { judge, thresholdFor } from '../utils/rebalance'
 
 const CASH_CODE = '000000'
+
+// 当前选中的定投方案：切换后所有数据（summary/quarters/xirr/再平衡）按该方案过滤
+const planId = ref(null)
 
 const loading = ref(false)
 const loadingQuote = ref(false)
@@ -254,6 +274,7 @@ const xirrData = ref({
   account: { xirr: null, invested: 0, current_value: 0, gain: 0, gain_pct: null, start_date: null },
   funds: [],
 })
+const rbData = ref(null) // 后端 /rebalance/check 的偏离分析（与「再平衡体检」页一致）
 // 再平衡判定参数（默认与后端 config 一致，加载后覆盖）
 const rebalanceParams = ref({ r_band: 15, min_abs: 1, max_abs: 3, amount_floor: 300 })
 const router = useRouter()
@@ -399,38 +420,64 @@ async function loadQuotes() {
   }
 }
 
+// 方案内参数：选中方案后各查询都带 plan_id（未选中时不传，兼容无方案场景）
+function planParams() {
+  return planId.value ? { plan_id: planId.value } : {}
+}
+
 async function loadData() {
   loading.value = true
   try {
-    const [sumData, quarterData, purchaseData, xirr, rbParams] = await Promise.all([
-      fundsApi.summary(),
-      quartersApi.list(),
-      purchasesApi.list({ page: 1, page_size: 100 }), // 含买卖，供趋势图累计份额
-      xirrApi.get().catch(() => ({ account: xirrData.value.account, funds: [] })),
-      rebalanceApi.getParams().catch(() => rebalanceParams.value),
+    const pp = planParams()
+    const [sumData, quarterData, purchaseData, xirr, rb] = await Promise.all([
+      fundsApi.summary(pp),
+      quartersApi.list(pp),
+      purchasesApi.list({ page: 1, page_size: 100, ...pp }), // 含买卖，供趋势图累计份额
+      xirrApi.get(pp).catch(() => xirrData.value),
+      rebalanceApi.check(pp).catch(() => null),
     ])
     summary.value = sumData
     quarters.value = quarterData || []
     purchases.value = purchaseData?.items || []
     xirrData.value = xirr
-    if (rbParams) rebalanceParams.value = rbParams
+    // 后端偏离分析：卡片展示用；其 params 同时供持仓表的判定用
+    if (rb) {
+      rbData.value = rb
+      rebalanceParams.value = rb.params
+    }
     await loadQuotes()
   } finally {
     loading.value = false
   }
 }
 
-// 一键同步全部行情（补拉日线 + 生成权益/现金流），完成后刷新页面数据
+// 方案切换：重新拉取该方案下全部数据
+async function onPlanChange() {
+  await loadData()
+}
+
+// 一键同步全部行情（增量补缺失日线 + 权益/现金流），完成后刷新页面数据
 async function syncAll() {
+  try {
+    await ElMessageBox.confirm(
+      '将同步所有基金缺失的历史日线，并增量生成每日权益流水与现金流量（只补缺失，不覆盖已有数据）。',
+      '确认同步全部行情？',
+      { type: 'warning', confirmButtonText: '确认同步', cancelButtonText: '取消' }
+    )
+  } catch {
+    return // 用户取消
+  }
   syncing.value = true
   try {
     const r = await syncApi.all()
     ElMessage.success(
-      `已同步 ${r.funds} 只基金：新增日线 ${r.prices_inserted} 根、权益流水 ${r.holdings_generated} 天、现金流 ${r.cash_generated} 天`
+      r && r.funds != null
+        ? `已同步 ${r.funds} 只基金：新增日线 ${r.prices_inserted} 根、权益流水 ${r.holdings_generated} 天、现金流 ${r.cash_generated} 天`
+        : '同步完成'
     )
     await loadData()
   } catch {
-    // 具体错误已由拦截器弹出
+    // 失败提醒由 axios 拦截器统一弹出
   } finally {
     syncing.value = false
   }
@@ -441,37 +488,52 @@ function fmtXirr(v) {
   return v == null ? '—' : `${(v * 100).toFixed(2)}%`
 }
 
-// 再平衡卡片：排除手续费行（基金 + 现金）
-const rbRows = computed(() => rows.value.filter((r) => !r.isFee))
+// 再平衡卡片：用后端 /rebalance/check 的偏离分析（与「再平衡体检」页一致）
+const rbRows = computed(() => {
+  if (!rbData.value) return []
+  const fundRows = (rbData.value.funds || []).map((f) => ({ ...f }))
+  const c = rbData.value.cash
+  if (c) fundRows.push({ ...c, fund_id: -1, fund_code: '000000', fund_name: '现金' })
+  return fundRows
+})
 function rbPct(row) {
-  if (row.realRatio == null) return 0
-  return Math.min(100, Math.max(0, row.realRatio))
+  if (row.real == null) return 0
+  return Math.min(100, Math.max(0, row.real))
 }
 function rbMarkerLeft(row) {
-  return `${Math.min(100, Number(row.target_ratio))}%`
+  return `${Math.min(100, Number(row.target))}%`
 }
 function rbColor(row) {
-  if (row.target_ratio == null) return '#c0c4cc'
-  if (row.ratioStatus === 'above') return '#f56c6c'
-  if (row.ratioStatus === 'below') return '#e6a23c'
+  if (row.target == null) return '#c0c4cc'
+  if (row.status === 'above') return '#f56c6c'
+  if (row.status === 'below') return '#e6a23c'
   return '#409eff'
 }
 function rbTagType(row) {
-  if (row.target_ratio == null) return 'info'
-  if (row.ratioStatus === 'above') return 'danger'
-  if (row.ratioStatus === 'below') return 'warning'
+  if (row.target == null) return 'info'
+  if (row.status === 'above') return 'danger'
+  if (row.status === 'below') return 'warning'
   return 'success'
 }
-function rbSuggestion(row) {
-  if (row.target_ratio == null) return '未设目标'
-  if (row.isCash) {
-    if (row.ratioStatus === 'above') return '现金偏多，可买入'
-    if (row.ratioStatus === 'below') return '现金偏低'
+function rbStatusText(row) {
+  if (row.target == null) return '未设目标'
+  if (row.fund_code === '000000') {
+    if (row.status === 'above') return '现金偏多'
+    if (row.status === 'below') return '现金偏低'
     return '达标'
   }
-  if (row.ratioStatus === 'above') return '超配，可减仓'
-  if (row.ratioStatus === 'below') return '低配，可加仓'
+  if (row.status === 'above') return '超配'
+  if (row.status === 'below') return '低配'
   return '达标'
+}
+function signedPct(v) {
+  const n = Number(v || 0)
+  return (n >= 0 ? '+' : '') + n.toFixed(2) + '%'
+}
+// 相对偏离：|偏离| ÷ 目标（相对自身目标的真实跑偏幅度）
+function relDev(row) {
+  if (row.target == null || !row.target) return '-'
+  return (Math.abs(row.deviation) / row.target * 100).toFixed(1) + '%'
 }
 
 function tableSummary({ columns }) {
@@ -520,10 +582,12 @@ function signed(v) {
   return (n >= 0 ? '+' : '-') + abs
 }
 
-onMounted(loadData)
 </script>
 
 <style scoped>
+.plan-bar {
+  margin-bottom: 16px;
+}
 .cards {
   margin-bottom: 16px;
 }
@@ -714,9 +778,15 @@ onMounted(loadData)
   color: #606266;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
+  line-height: 1.5;
 }
 .rb-text .muted {
   color: #c0c4cc;
+}
+.rb-dev {
+  display: block;
+  font-size: 11px;
+  margin-top: 2px;
 }
 .rb-row .el-tag {
   justify-self: end;

@@ -9,32 +9,41 @@ from app import models
 CASH_FUND_CODE = "000000"
 
 
-def generate(db: Session, start_date: date, end_date: date) -> int:
-    """生成每日现金流：按日历日累计。
+def generate(
+    db: Session, plan_id: int, start_date: date, end_date: date, only_missing: bool = False
+) -> int:
+    """生成每日现金流：按日历日累计（按方案拆分）。
 
-    每日增量 = 季度预算入账(quarter.start_date, +budget)
+    每日增量 = 方案周期预算入账(quarter.start_date, +budget)
              − 买入支出(−buy total_amount，已含手续费)
              ＋ 卖出回笼(+sell total_amount)
              − 卖出手续费(−sell fee)
     现金基金(000000)的记录不计入（其本身是现金，不是真实买卖）。
+    only_missing=True 时跳过已有日期（增量补缺失，不覆盖存量）。
     """
     # 现金基金 id
     cash_fund_id = db.scalar(
         select(models.Fund.id).where(models.Fund.fund_code == CASH_FUND_CODE)
     )
 
-    # 1) 事件表：date -> 当日增量
+    # 1) 事件表：date -> 当日增量（只统计该方案）
     events: dict[date, Decimal] = {}
-    # 预算入账：季度开始日
-    quarters = list(db.scalars(select(models.Quarter)).all())
+    # 预算入账：周期开始日
+    quarters = list(
+        db.scalars(
+            select(models.Quarter).where(models.Quarter.plan_id == plan_id)
+        ).all()
+    )
     for q in quarters:
         if q.start_date:
             events[q.start_date] = events.get(q.start_date, Decimal("0")) + q.budget
     # 买卖：购买记录（排除现金基金）
     purchases = list(
         db.scalars(
-            select(models.PurchaseRecord)
-            .where(models.PurchaseRecord.purchase_date <= end_date)
+            select(models.PurchaseRecord).where(
+                models.PurchaseRecord.plan_id == plan_id,
+                models.PurchaseRecord.purchase_date <= end_date,
+            )
         ).all()
     )
     for p in purchases:
@@ -54,15 +63,17 @@ def generate(db: Session, start_date: date, end_date: date) -> int:
     cash = Decimal("0")
     existing = {
         r.trade_date: r
-        for r in db.scalars(select(models.FundCashDaily)).all()
+        for r in db.scalars(
+            select(models.FundCashDaily).where(models.FundCashDaily.plan_id == plan_id)
+        ).all()
     }
     count = 0
     while day <= end_date:
         cash += events.get(day, Decimal("0"))
-        if day >= start_date:
+        if day >= start_date and not (only_missing and day in existing):
             row = existing.get(day)
             if row is None:
-                row = models.FundCashDaily(trade_date=day)
+                row = models.FundCashDaily(plan_id=plan_id, trade_date=day)
                 db.add(row)
             row.increment = events.get(day, Decimal("0"))
             row.cash_amount = cash
@@ -72,11 +83,14 @@ def generate(db: Session, start_date: date, end_date: date) -> int:
     return count
 
 
-def list_cash(db: Session, start_date: date, end_date: date) -> list[models.FundCashDaily]:
+def list_cash(
+    db: Session, plan_id: int, start_date: date, end_date: date
+) -> list[models.FundCashDaily]:
     return list(
         db.scalars(
             select(models.FundCashDaily)
             .where(
+                models.FundCashDaily.plan_id == plan_id,
                 models.FundCashDaily.trade_date >= start_date,
                 models.FundCashDaily.trade_date <= end_date,
             )
@@ -87,6 +101,7 @@ def list_cash(db: Session, start_date: date, end_date: date) -> list[models.Fund
 
 def check_missing(
     db: Session,
+    plan_id: int,
     start_date: date,
     end_date: date,
 ) -> tuple[int, date | None, date | None]:
@@ -94,6 +109,7 @@ def check_missing(
     existing = set(
         db.scalars(
             select(models.FundCashDaily.trade_date).where(
+                models.FundCashDaily.plan_id == plan_id,
                 models.FundCashDaily.trade_date >= start_date,
                 models.FundCashDaily.trade_date <= end_date,
             )

@@ -1,5 +1,13 @@
 <template>
   <div class="rebalance">
+    <div class="plan-bar">
+      <PlanSwitcher
+        :model-value="planId"
+        @update:model-value="planId = $event"
+        @change="onPlanChange"
+      />
+    </div>
+
     <el-card shadow="never">
       <template #header>
         <div class="card-header">
@@ -223,13 +231,17 @@
 </template>
 
 <script setup>
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { fundsApi, purchasesApi, quartersApi, quotesApi } from '../api'
+import PlanSwitcher from '../components/PlanSwitcher.vue'
+import { fundsApi, planApi, purchasesApi, quartersApi, quotesApi } from '../api'
 
 const router = useRouter()
 const CASH_CODE = '000000'
+
+// 当前选中的定投方案（本页的「方案」指卖出式再平衡计划 plan，注意区分）
+const planId = ref(null)
 
 const budget = ref(0)
 const buyFeeRate = ref(0.03) // 买入费率（%）
@@ -405,7 +417,7 @@ async function execute() {
   submitting.value = true
   try {
     const period = periodFromDate(rebalanceDate.value)
-    // 1) 建/取季度记录
+    // 1) 建/取季度记录（带 plan_id）
     let quarter = null
     try {
       quarter = await quartersApi.create({
@@ -413,9 +425,10 @@ async function execute() {
         start_date: rebalanceDate.value,
         budget: budget.value,
         note: period + ' 再平衡',
+        plan_id: planId.value,
       })
     } catch {
-      const all = await quartersApi.list().catch(() => [])
+      const all = await quartersApi.list({ plan_id: planId.value }).catch(() => [])
       quarter = (all || []).find((q) => q.period === period)
       if (!quarter) {
         ElMessage.error('创建季度记录失败')
@@ -424,13 +437,14 @@ async function execute() {
     }
     const quarterId = quarter.id
 
-    // 2) 批量记录 卖出 + 买入
+    // 2) 批量记录 卖出 + 买入（带 plan_id）
     const records = plan.value.items
       .filter((r) => r.action !== 'hold')
       .map((r) => ({
         fund_id: r.fund_id,
         type: r.action,
         quarter_id: quarterId,
+        plan_id: planId.value,
         purchase_date: rebalanceDate.value,
         price: r.price,
         hands: r.actHands,
@@ -464,35 +478,50 @@ function money(v) {
   })
 }
 
-onMounted(async () => {
+// 加载当前方案：标的/占比取方案内 plan_fund，预算默认取方案 amount，
+// 若当前周期该方案已有季度则取其预算；现有市值/现金取该方案 summary/quarters。
+async function loadForPlan() {
+  fundRows.value = []
+  cashCurrent.value = 0
+  if (!planId.value) return
   try {
-    const [sumData, fundData, quarterData] = await Promise.all([
-      fundsApi.summary(),
-      fundsApi.list({ page: 1, page_size: 20 }),
-      quartersApi.list(),
+    const [plans, fundData, sumData, quarterData] = await Promise.all([
+      planApi.list(),
+      fundsApi.list({ page: 1, page_size: 100 }),
+      fundsApi.summary({ plan_id: planId.value }),
+      quartersApi.list({ plan_id: planId.value }),
     ])
-    const all = fundData.items || []
+    const plan = (plans || []).find((p) => p.id === planId.value)
     const sumMap = Object.fromEntries((sumData.funds || []).map((f) => [f.fund_id, f]))
-    const funds = all.filter((f) => f.fund_code !== CASH_CODE)
-    funds.sort((a, b) => (b.target_ratio || 0) - (a.target_ratio || 0))
-    fundRows.value = funds.map((f) => {
-      const s = sumMap[f.id] || {}
-      return {
-        fund_id: f.id,
-        fund_code: f.fund_code,
-        fund_name: f.fund_name,
-        target_ratio: f.target_ratio != null ? Number(f.target_ratio) : null,
-        targetPct: f.target_ratio != null ? Number(f.target_ratio) : 0, // 滑块目标，默认=规定比例
-        price: null,
-        handPrice: null,
-        shares: Number(s.total_shares || 0),
-        sharesPerHand: 100,
-        currentMV: 0,
-        currentPct: null,
-      }
-    })
+    // 基金元数据兜底（方案内 fund_code/fund_name 缺失时用）
+    const metaById = Object.fromEntries(
+      (fundData.items || [])
+        .filter((f) => f.fund_code !== CASH_CODE)
+        .map((f) => [f.id, f])
+    )
+    const planFunds = plan?.funds || []
+    fundRows.value = planFunds
+      .filter((pf) => pf.fund_code !== CASH_CODE)
+      .map((pf) => {
+        const s = sumMap[pf.fund_id] || {}
+        const meta = metaById[pf.fund_id] || {}
+        return {
+          fund_id: pf.fund_id,
+          fund_code: pf.fund_code,
+          fund_name: pf.fund_name || meta.fund_name,
+          target_ratio: pf.target_ratio != null ? Number(pf.target_ratio) : null,
+          targetPct: pf.target_ratio != null ? Number(pf.target_ratio) : 0, // 滑块目标，默认=方案比例
+          price: null,
+          handPrice: null,
+          shares: Number(s.total_shares || 0),
+          sharesPerHand: 100,
+          currentMV: 0,
+          currentPct: null,
+        }
+      })
     cashCurrent.value = (quarterData || []).reduce((s, q) => s + Number(q.cash_amount || 0), 0)
-    // 若当前周期已有季度，预算预填其预算
+    // 预算默认用方案每次投入金额；若当前周期已有季度，预算预填其预算
+    budget.value = plan && plan.amount != null ? Number(plan.amount) : 0
     const period = periodFromDate(todayStr())
     const cur = (quarterData || []).find((q) => q.period === period)
     if (cur) budget.value = Number(cur.budget || 0)
@@ -500,10 +529,18 @@ onMounted(async () => {
   } catch {
     // 接口错误在拦截器已展示
   }
-})
+}
+
+// 方案切换：重新按该方案初始化标的/预算并拉行情
+async function onPlanChange() {
+  await loadForPlan()
+}
 </script>
 
 <style scoped>
+.plan-bar {
+  margin-bottom: 16px;
+}
 .card-header {
   display: flex;
   justify-content: space-between;
