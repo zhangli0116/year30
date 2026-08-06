@@ -182,8 +182,8 @@
         </div>
         <div class="cash-breakdown">
           本季构成：目标现金 ¥{{ money(view.cashTargetAmount) }}（{{ view.cashTargetPct.toFixed(1) }}%）＋ 结余 ¥{{ signedMoney(view.cashSurplus) }}
-          <span v-if="view.cashSurplus > 0" class="cash-hint">（基金少投，预算未投完）</span>
-          <span v-else-if="view.cashSurplus < 0" class="cash-hint">（基金超投，动用了现金仓）</span>
+          <span v-if="view.cashSurplus > 0" class="cash-hint">（新增现金高于目标，基金占比略低）</span>
+          <span v-else-if="view.cashSurplus < 0" class="cash-hint">（新增现金不足目标，动用了现金仓）</span>
         </div>
       </el-alert>
 
@@ -335,14 +335,19 @@ const view = computed(() => {
 
   const cashNew = Math.max(0, budget.value - fundAmount)
   const cashFinal = cashCurrent.value + cashNew
+  // 录入后总资产 = 现有总市值 + 预算 − 手续费（手续费是纯成本，不成为资产）
+  const finalTotal = currentTotal + budget.value - totalFee
   const cashTargetPct = Math.max(
     0,
     100 - rows.reduce((s, r) => s + (r.targetPct || 0), 0)
   )
-  const cashTargetAmount = (cashTargetPct / 100) * budget.value
+  // 达到整体现金目标所需的「本季新增现金」= 目标占比 × 录入后总资产 − 现有现金
+  // （与基金侧同一口径：占比基于录入后总资产，而非本季预算）
+  const cashTargetAmount = Math.max(
+    0,
+    (cashTargetPct / 100) * finalTotal - cashCurrent.value
+  )
   const cashSurplus = cashNew - cashTargetAmount
-  // 录入后总资产 = 现有总市值 + 预算 − 手续费（手续费是纯成本，不成为资产）
-  const finalTotal = currentTotal + budget.value - totalFee
   const finalTotalCheck =
     derived.reduce((s, d) => s + (d.currentMV ?? 0) + d.principal, 0) + cashFinal
 
@@ -412,8 +417,9 @@ function onSlider(changedRow) {
     return { row: r, handPrice, need }
   })
   const totalNeed = needs.reduce((s, x) => s + x.need, 0)
-  // 本金上限 = 预算 − 手动行 − 手续费底线（每自动行至少 5 元）
-  const principalCap = Math.max(0, budgetForAuto - auto.length * 5)
+  // 本金上限 = 预算 − 手动行 − 手续费底线（每自动行至少 5 元）；
+  // 再除以 (1+费率) 为大额本金预留其手续费溢出（费率>5元时），保证「本金+手续费」绝不超支
+  const principalCap = Math.max(0, (budgetForAuto - auto.length * 5) / (1 + feeRate.value / 100))
   const scale = totalNeed > 0 && totalNeed > principalCap ? principalCap / totalNeed : 1
   needs.forEach(({ row, handPrice, need }) => {
     const alloc = need * scale
@@ -427,10 +433,14 @@ function onHandsChange(row) {
   const handPrice = row.price ? +(row.price * 100).toFixed(2) : null
   const currentMV = row.price ? row.currentShares * row.price : 0
   const finalMV = currentMV + (row.hands || 0) * (handPrice || 0)
-  row.targetPct =
-    view.value.finalTotal > 0
-      ? +(finalMV / view.value.finalTotal) * 100
-      : 0
+  // 隐含占比钳制在 [0, sliderMax]，避免手动手数把目标顶到 100% 以上破坏比例总和
+  row.targetPct = Math.max(
+    0,
+    Math.min(
+      view.value.finalTotal > 0 ? +((finalMV / view.value.finalTotal) * 100) : 0,
+      sliderMax(row)
+    )
+  )
 }
 
 function pickPrice(row, price, label) {
@@ -495,6 +505,13 @@ function submitQuarter() {
   }
   if (!quarterDate.value) {
     ElMessage.warning('请选择买入日期')
+    return
+  }
+  // 防止手动覆盖手数后总投入超过预算（否则季度 cash_amount 会变负）
+  if (view.value.fundAmount > budget.value + 0.01) {
+    ElMessage.warning(
+      `本季投入 ${money(view.value.fundAmount)} 元超出预算 ${money(budget.value)} 元，请调整预算或减少手数`
+    )
     return
   }
 
