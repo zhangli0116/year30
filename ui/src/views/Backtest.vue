@@ -134,14 +134,22 @@
       <el-row v-if="result" :gutter="16" class="metrics">
         <el-col :span="4">
           <el-card shadow="hover" class="m-card">
-            <div class="m-label">XIRR 年化</div>
+            <div class="m-label">
+              <el-tooltip content="资金加权年化收益率：把每期投入按实际时间点折算，衡量『这些投入到现在，年化回报多少』。持有期短时会被放大，需结合天数看。" placement="top">
+                <span>XIRR 年化</span>
+              </el-tooltip>
+            </div>
             <div class="m-big" :class="numOr(xirr, 0) >= 0 ? 'up' : 'down'">{{ fmtXirr(xirr) }}</div>
             <div class="m-sub">资金加权 · 基于 {{ result.metrics.span_days }} 天</div>
           </el-card>
         </el-col>
         <el-col :span="4">
           <el-card shadow="hover" class="m-card">
-            <div class="m-label">TWR 期间</div>
+            <div class="m-label">
+              <el-tooltip content="时间加权收益率（期间，非年化）：剥离投入时点的影响，衡量策略本身的累计涨跌，短中期波动真实、不会被年化放大。" placement="top">
+                <span>TWR 期间</span>
+              </el-tooltip>
+            </div>
             <div class="m-big" :class="numOr(twr, 0) >= 0 ? 'up' : 'down'">{{ fmtPct(twr) }}</div>
             <div class="m-sub">年化 {{ fmtPct(twrAnnualized) }}</div>
           </el-card>

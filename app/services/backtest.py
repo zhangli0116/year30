@@ -19,6 +19,7 @@ from sqlalchemy.orm import Session
 
 from app import models
 from app.crud.purchase import MIN_FEE, _calc_fee
+from app.services.rebalance import get_params, judge, threshold_for
 from app.services.xirr import xirr
 
 _HANDS = 100  # 一手 = 100 份
@@ -47,6 +48,8 @@ def run_backtest(
     interval = plan.interval_days or 0
     warnings: list[str] = []
     cash_target_pct = Decimal(str(plan.cash_ratio or 0))
+    # 年末卖出式再平衡的判定参数与「再平衡体检」一致（app_setting，可在体检页调）
+    rb_params = get_params(db)
 
     # ---- 方案标的（排除现金虚拟基金）----
     plan_funds = db.execute(
@@ -204,10 +207,23 @@ def run_backtest(
                 }
             )
 
+    def _should_rebalance(f: dict, d: date, total: Decimal, mv: Decimal, price: Decimal) -> tuple[bool, str]:
+        """按「再平衡体检」判定参数判断该基金年末是否需要调：
+        阈值(%) = clamp(目标% × R, 底线, 上限)；|偏离%| > 阈值 且 偏离金额 ≥ 金额底线 → 调。
+        返回 (是否调, above/below/normal)。
+        """
+        target_pct = target_pct_for(f, d)
+        target_mv = total * target_pct / Decimal("100")
+        deviation_pct = float((mv - target_mv) / total * 100) if total > 0 else 0.0
+        threshold = threshold_for(float(target_pct), rb_params)
+        deviation_amount = abs(deviation_pct) / 100 * float(total)
+        status = judge(deviation_pct, threshold, rb_params["amount_floor"], deviation_amount)
+        return status != "normal", status
+
     def annual_rebalance(d: date, p: dict[int, Decimal]) -> None:
         nonlocal cash
         total = cash + sum(shares.get(fid, 0) * p[fid] for fid in p if p[fid] is not None)
-        # ① 先卖超配（整手，回现金扣卖费）
+        # ① 先卖超配（整手，回现金扣卖费）；只调「体检判定为超配」的基金
         for f in funds:
             fid = f["fund_id"]
             price = p.get(fid)
@@ -215,9 +231,10 @@ def run_backtest(
                 warnings.append(f"{f['fund_code']} 年末再平衡当日无价，跳过该基金")
                 continue
             mv = shares.get(fid, 0) * price
-            target_mv = total * target_pct_for(f, d) / Decimal("100")
-            if mv <= target_mv:
+            need, status = _should_rebalance(f, d, total, mv, price)
+            if not need or status != "above":
                 continue
+            target_mv = total * target_pct_for(f, d) / Decimal("100")
             lot = price * _HANDS
             hands = int((mv - target_mv) // lot)
             if hands <= 0:
@@ -240,16 +257,17 @@ def run_backtest(
                     "reason": "annual",
                 }
             )
-        # ② 再买低配（卖出现金回流，填到目标）
+        # ② 再买低配（卖出现金回流，填到目标）；只调「体检判定为低配」的基金
         for f in funds:
             fid = f["fund_id"]
             price = p.get(fid)
             if price is None or cash <= 0:
                 continue
             mv = shares.get(fid, 0) * price
-            target_mv = total * target_pct_for(f, d) / Decimal("100")
-            if mv >= target_mv:
+            need, status = _should_rebalance(f, d, total, mv, price)
+            if not need or status != "below":
                 continue
+            target_mv = total * target_pct_for(f, d) / Decimal("100")
             lot = price * _HANDS
             gap = target_mv - mv
             hands = min(int(gap // lot), int((cash - MIN_FEE) // lot))
