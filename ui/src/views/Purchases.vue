@@ -3,7 +3,7 @@
     <template #header>
       <div class="header">
         <div class="header-left">
-          <span>购买记录（按季度）</span>
+          <span>购买记录</span>
           <PlanSwitcher
             :model-value="planId"
             @update:model-value="planId = $event"

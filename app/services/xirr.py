@@ -7,9 +7,9 @@
 from __future__ import annotations
 
 import math
-from datetime import date
+from datetime import date, timedelta
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app import models
@@ -30,6 +30,7 @@ def xirr(flows: list[tuple[date, float]], guess: float = 0.1) -> float | None:
     """求解内部收益率。收敛失败或数据不足时返回 None。
 
     先牛顿迭代，失败则在整个可行域粗扫找变号区间再二分，覆盖负收益/极端情形。
+    注：持有期很短时年化会被放大（如 6 天亏 0.4% → 年化 -21%），前端会标注"基于 N 天"。
     """
     flows = [(d, float(a)) for d, a in flows if a]  # 忽略 0 金额
     if len(flows) < 2:
@@ -105,6 +106,95 @@ def xirr(flows: list[tuple[date, float]], guess: float = 0.1) -> float | None:
     if found is None:
         found = scan(1.0, 1e6)
     return found
+
+
+def twr_plan(db: Session, plan_id: int, today: date | None = None) -> dict | None:
+    """时间加权收益率（期间，非年化）：剥离投入时点，衡量策略本身表现。
+
+    每日组合价值 V = 权益 + 现金：
+      - 权益用「购买记录累计份额 × 该基金最近收盘价(前向填充)」重建（不依赖 fund_holding_daily，
+        避免买入发生在非交易日时权益晚现造成假尖峰）
+      - 现金取 fund_cash_daily
+    外部现金流 = 方案季度预算入账。每日子收益率 r_t = (V_t − V_{t−1} − 入账_t) / V_{t−1}；
+    TWR = Π(1+r_t) − 1。数据不足（<2 个可算日）返回 None。短期不被年化放大。
+    """
+    from app import crud
+
+    today = today or date.today()
+    purchases = list(
+        db.scalars(
+            select(models.PurchaseRecord)
+            .where(models.PurchaseRecord.plan_id == plan_id)
+            .order_by(models.PurchaseRecord.purchase_date)
+        ).all()
+    )
+    if not purchases:
+        return None
+    fund_ids = {p.fund_id for p in purchases}
+    # 每只基金价格序列 [(date, close)] 升序
+    price_series: dict[int, list] = {}
+    for fid in fund_ids:
+        price_series[fid] = db.execute(
+            select(models.FundPrice.trade_date, models.FundPrice.close_price)
+            .where(models.FundPrice.fund_id == fid)
+            .order_by(models.FundPrice.trade_date)
+        ).all()
+    # 每日现金
+    cash_map = {
+        d: float(c)
+        for d, c in db.execute(
+            select(models.FundCashDaily.trade_date, models.FundCashDaily.cash_amount)
+            .where(models.FundCashDaily.plan_id == plan_id)
+            .order_by(models.FundCashDaily.trade_date)
+        ).all()
+    }
+    # 外部现金流：季度预算入账
+    deposits: dict[date, float] = {}
+    for q in crud.quarter.list_quarters(db, plan_id):
+        if q.start_date:
+            deposits[q.start_date] = deposits.get(q.start_date, 0.0) + float(q.budget)
+    if not cash_map:
+        return None
+
+    start = min(p.purchase_date for p in purchases)
+    if cash_map:
+        start = min(start, min(cash_map))
+    day = start
+    shares: dict[int, int] = {}
+    pi = 0
+    price_idx = {fid: 0 for fid in fund_ids}
+    prev_v = 0.0
+    twr = 1.0
+    count = 0
+    while day <= today:
+        while pi < len(purchases) and purchases[pi].purchase_date <= day:
+            p = purchases[pi]
+            sign = -1 if p.type == "sell" else 1
+            shares[p.fund_id] = shares.get(p.fund_id, 0) + sign * p.hands * p.shares_per_hand
+            pi += 1
+        # 权益 = Σ 份额 × 最近收盘价（前向填充）
+        equity = 0.0
+        for fid in fund_ids:
+            s = price_series[fid]
+            while price_idx[fid] < len(s) and s[price_idx[fid]][0] <= day:
+                price_idx[fid] += 1
+            if price_idx[fid] > 0:
+                equity += shares.get(fid, 0) * float(s[price_idx[fid] - 1][1])
+        cash = cash_map.get(day)
+        if cash is None:
+            day += timedelta(days=1)
+            continue
+        v = equity + cash
+        dep = deposits.get(day, 0.0)
+        if prev_v > 0:
+            r = (v - prev_v - dep) / prev_v
+            twr *= 1 + r
+            count += 1
+        prev_v = v
+        day += timedelta(days=1)
+    if count < 2:
+        return None
+    return {"twr": round(twr - 1, 6), "span_days": (today - start).days}
 
 
 def _price_map(db: Session, codes: list[str]) -> dict[str, float]:
@@ -255,6 +345,7 @@ def account_xirr(
     flows.append((date.today(), current_value))
     rate = xirr(flows)
     gain = current_value - invested
+    span_days = (date.today() - start_date).days if start_date else 0
     return {
         "xirr": rate,
         "invested": round(invested, 2),
@@ -262,6 +353,7 @@ def account_xirr(
         "gain": round(gain, 2),
         "gain_pct": round(gain / invested * 100, 2) if invested > 0 else None,
         "start_date": start_date.isoformat() if start_date else None,
+        "span_days": span_days,
     }
 
 
@@ -299,10 +391,14 @@ def fund_xirr(
         current_mv = shares * price
         flows.append((date.today(), current_mv))
     rate = xirr(flows) if len(flows) >= 2 else None
+    span_days = 0
+    if records:
+        span_days = (date.today() - min(r.purchase_date for r in records)).days
     return {
         "fund_id": fund_id,
         "xirr": rate,
         "current_mv": round(current_mv, 2),
         "invested": round(invested, 2),
         "flows_count": len(flows),
+        "span_days": span_days,
     }

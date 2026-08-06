@@ -20,6 +20,12 @@ def get_xirr(
     prices = xirr_service._price_map(db, codes)  # 行情只拉一次，账户与各基金复用
 
     account = xirr_service.account_xirr(db, plan_id=plan_id, prices=prices)
+    # 时间加权收益（期间非年化，短期稳定）：方案才可算（需按方案的每日流水）
+    if plan_id is not None:
+        twr = xirr_service.twr_plan(db, plan_id)
+        if twr:
+            account["twr"] = twr["twr"]
+            account["span_days"] = twr["span_days"]
     fund_rows = []
     for f in funds_info:
         d = xirr_service.fund_xirr(

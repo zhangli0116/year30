@@ -431,7 +431,9 @@ class XirrFundOut(BaseModel):
 
 
 class XirrAccountOut(BaseModel):
-    xirr: Optional[float] = None  # 全账户资金加权年化
+    xirr: Optional[float] = None  # 全账户资金加权年化（短期会被放大，需结合 span_days 看）
+    twr: Optional[float] = None  # 时间加权收益率（期间非年化，剥离投入时点，短期稳定）
+    span_days: int = 0  # 持有天数（首次投入至今），用于年化标注
     invested: float = 0  # 累计投入 = Σ 季度预算
     current_value: float = 0  # 期末总资产 = 权益市值 + 现金
     gain: float = 0  # 收益额

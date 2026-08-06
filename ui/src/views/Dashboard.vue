@@ -45,18 +45,24 @@
     <el-card shadow="never" class="xirr-card">
       <template #header>
         <div class="card-header">
-          <span>年化收益（XIRR）</span>
-          <span class="header-note">资金加权年化：全账户按季度预算到账时点，单基金按实际买卖现金流</span>
+          <span>收益表现</span>
+          <span class="header-note">主数字为时间加权收益（期间、剥离投入时点）；下方为资金加权年化 XIRR（短期会放大，标注基于 N 天）</span>
         </div>
       </template>
       <div class="xirr-body">
         <div class="xirr-account">
-          <div class="stat-label">全账户</div>
+          <div class="stat-label">全账户 · 时间加权收益</div>
           <div
             class="xirr-big"
-            :class="xirrData.account.xirr != null && xirrData.account.xirr >= 0 ? 'up' : 'down'"
+            :class="(xirrData.account.twr ?? xirrData.account.xirr ?? 0) >= 0 ? 'up' : 'down'"
           >
-            {{ fmtXirr(xirrData.account.xirr) }}
+            {{ fmtXirr(xirrData.account.twr ?? xirrData.account.xirr) }}
+          </div>
+          <div class="xirr-meta">
+            年化 XIRR {{ fmtXirr(xirrData.account.xirr) }}
+            <span v-if="xirrData.account.xirr != null" :class="xirrData.account.span_days < 365 ? 'down' : 'muted'">
+              （基于 {{ xirrData.account.span_days }} 天{{ xirrData.account.span_days < 365 ? '，短期波动大' : '' }}）
+            </span>
           </div>
           <div class="xirr-meta">
             投入 ¥{{ money(xirrData.account.invested) }}
@@ -150,7 +156,7 @@
           <span class="header-note">历史来自每日权益流水；今日按实时价 × 持有份额</span>
         </div>
       </template>
-      <TotalEquityChart :today-equity="todayEquity" :quarters="quarters" />
+      <TotalEquityChart :today-equity="todayEquity" :quarters="quarters" :plan-id="planId" />
     </el-card>
 
     <!-- 季度趋势：暂时注释掉，暂无用处

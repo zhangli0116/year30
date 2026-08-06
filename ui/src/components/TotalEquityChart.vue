@@ -25,6 +25,7 @@ import {
 const props = defineProps({
   todayEquity: { type: Number, default: null },
   quarters: { type: Array, default: () => [] },
+  planId: { type: [Number, String], default: null },
 })
 
 const chartEl = ref(null)
@@ -38,10 +39,12 @@ function todayStr() {
 
 async function load() {
   const end = todayStr()
+  const params = { start_date: '2024-01-01', end_date: end }
+  if (props.planId != null) params.plan_id = props.planId // 走势随方案
   try {
     const [holdData, cashData] = await Promise.all([
-      holdingsApi.total({ start_date: '2024-01-01', end_date: end }),
-      cashApi.list({ start_date: '2024-01-01', end_date: end }),
+      holdingsApi.total(params),
+      cashApi.list(params),
     ])
     const equityMap = Object.fromEntries((holdData || []).map((r) => [r.trade_date, Number(r.total_equity)]))
     const cashMap = Object.fromEntries((cashData || []).map((r) => [r.trade_date, Number(r.cash_amount)]))
@@ -115,7 +118,7 @@ function onResize() {
   chart && chart.resize()
 }
 
-watch(() => [props.todayEquity, props.quarters], load)
+watch(() => [props.todayEquity, props.quarters, props.planId], load)
 
 onMounted(async () => {
   await load()
