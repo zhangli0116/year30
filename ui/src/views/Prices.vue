@@ -1,11 +1,14 @@
 <template>
   <div class="prices">
-    <el-card shadow="never">
+    <el-card shadow="never" class="prices-card">
       <template #header>
         <div class="card-header">
-          <span>基金价格</span>
+          <div class="card-title">
+            <span class="title">基金价格</span>
+            <span class="subtitle">K线 · 成交量 · 五档盘口</span>
+          </div>
           <div class="header-right">
-            <el-select v-model="fundId" placeholder="选择基金" style="width: 200px" @change="loadKline">
+            <el-select v-model="fundId" placeholder="选择基金" style="width: 200px" @change="onFundChange">
               <el-option
                 v-for="f in fundOptions"
                 :key="f.id"
@@ -19,7 +22,7 @@
                 type="date"
                 value-format="YYYY-MM-DD"
                 placeholder="开始日期"
-                style="width: 150px"
+                style="width: 140px"
                 @change="onDateChange"
               />
               <span class="to">至</span>
@@ -28,11 +31,11 @@
                 type="date"
                 value-format="YYYY-MM-DD"
                 placeholder="结束日期"
-                style="width: 150px"
+                style="width: 140px"
                 @change="onDateChange"
               />
             </div>
-            <el-select v-model="source" placeholder="数据源" style="width: 170px">
+            <el-select v-model="source" placeholder="数据源" style="width: 160px">
               <el-option
                 v-for="s in sources"
                 :key="s.name"
@@ -47,13 +50,72 @@
         </div>
       </template>
 
+      <!-- 行情概要条 -->
+      <div v-if="quote" class="quote-bar">
+        <div class="qb-name">{{ fundLabel }}<span class="qb-code">{{ fundCode }}</span></div>
+        <div class="qb-price" :class="isUp ? 'up' : 'down'">{{ fmtPrice(quote.last) }}</div>
+        <div class="qb-change" :class="isUp ? 'up' : 'down'">
+          {{ quote.change >= 0 ? '+' : '' }}{{ fmtPrice(quote.change) }}
+          <span class="qb-pct">（{{ quote.change_pct >= 0 ? '+' : '' }}{{ quote.change_pct }}%）</span>
+        </div>
+        <div class="qb-meta">昨收 {{ fmtPrice(quote.prev_close) }} · 时间 {{ quote.time }}</div>
+      </div>
+
       <el-alert v-if="syncResult" type="success" :closable="false" class="sync-result">
         {{ syncResult }}
       </el-alert>
 
-      <div ref="chartEl" v-loading="chartLoading" class="kline-chart"></div>
-      <div v-if="!bars.length && !chartLoading" class="empty-tip">
-        该区间暂无价格数据，点「同步缺失价格」从所选数据源拉取。
+      <div class="chart-wrap">
+        <div class="kline-area">
+          <div ref="chartEl" v-loading="chartLoading" class="kline-chart"></div>
+          <div v-if="!bars.length && !chartLoading" class="empty-tip">
+            该区间暂无价格数据，点「同步缺失价格」从所选数据源拉取。
+          </div>
+        </div>
+
+        <!-- 右侧五档盘口 -->
+        <div class="quote-panel" v-if="quote">
+          <div class="qp-title">五档盘口</div>
+          <div class="qp-group sell">
+            <div
+              v-for="i in [4, 3, 2, 1, 0]"
+              :key="'a' + i"
+              class="qp-row"
+              :class="{ active: quote.ask[i] === quote.last }"
+            >
+              <span class="qp-lvl">卖{{ i + 1 }}</span>
+              <div class="qp-main">
+                <div class="qp-depth sell" :style="{ width: depthPct(quote.ask_vol[i]) }"></div>
+                <span class="qp-price sell">{{ fmtPrice(quote.ask[i]) }}</span>
+                <span class="qp-vol">{{ fmtVol(quote.ask_vol[i]) }}</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="qp-last">
+            <span class="qp-lvl">最新</span>
+            <span class="qp-last-val" :class="isUp ? 'up' : 'down'">{{ fmtPrice(quote.last) }}</span>
+            <span class="qp-change" :class="isUp ? 'up' : 'down'">
+              {{ quote.change >= 0 ? '+' : '' }}{{ quote.change_pct }}%
+            </span>
+          </div>
+
+          <div class="qp-group buy">
+            <div
+              v-for="i in [0, 1, 2, 3, 4]"
+              :key="'b' + i"
+              class="qp-row"
+              :class="{ active: quote.bid[i] === quote.last }"
+            >
+              <span class="qp-lvl">买{{ i + 1 }}</span>
+              <div class="qp-main">
+                <div class="qp-depth buy" :style="{ width: depthPct(quote.bid_vol[i]) }"></div>
+                <span class="qp-price buy">{{ fmtPrice(quote.bid[i]) }}</span>
+                <span class="qp-vol">{{ fmtVol(quote.bid_vol[i]) }}</span>
+              </div>
+            </div>
+          </div>
+        </div>
       </div>
     </el-card>
 
@@ -98,10 +160,10 @@
 </template>
 
 <script setup>
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import * as echarts from 'echarts'
-import { fundsApi, pricesApi } from '../api'
+import { fundsApi, pricesApi, quotesApi } from '../api'
 
 const fundOptions = ref([])
 const sources = ref([])
@@ -112,7 +174,8 @@ const endDate = ref('')
 const syncing = ref(false)
 const chartLoading = ref(false)
 const syncResult = ref(null)
-const bars = ref([]) // [{trade_date, open, high, low, close}]
+const bars = ref([]) // [{trade_date, open, high, low, close, volume}]
+const quote = ref(null) // 实时五档 {last, bid, ask, bid_vol, ask_vol, time}
 
 // 同步确认弹窗
 const syncConfirmVisible = ref(false)
@@ -121,6 +184,19 @@ const segList = ref([])
 const fundLabel = computed(
   () => fundOptions.value.find((f) => f.id === fundId.value)?.fund_name || ''
 )
+const fundCode = computed(
+  () => fundOptions.value.find((f) => f.id === fundId.value)?.fund_code || ''
+)
+const isUp = computed(() => (quote.value ? (quote.value.change_pct ?? 0) >= 0 : true))
+const maxVol = computed(() => {
+  if (!quote.value) return 1
+  const vols = [...(quote.value.bid_vol || []), ...(quote.value.ask_vol || [])]
+  return Math.max(1, ...vols.map((v) => Number(v) || 0))
+})
+function depthPct(v) {
+  const n = Number(v) || 0
+  return Math.min(100, (n / maxVol.value) * 100) + '%'
+}
 
 const chartEl = ref(null)
 let chart = null
@@ -157,6 +233,38 @@ async function loadKline() {
   } finally {
     chartLoading.value = false
   }
+}
+
+// 拉取实时五档（含买卖挂单量）
+async function loadQuote() {
+  const fund = fundOptions.value.find((f) => f.id === fundId.value)
+  if (!fund) return
+  try {
+    const data = await quotesApi.list(fund.fund_code)
+    quote.value = data.quotes && data.quotes[0]
+  } catch {
+    quote.value = null
+  }
+  // 五档面板出现会让 K线 容器变窄，等 DOM 更新后重算图表尺寸，避免重叠
+  await nextTick()
+  chart && chart.resize()
+}
+
+function fmtPrice(v) {
+  return v == null ? '-' : Number(v).toFixed(3)
+}
+
+// 成交量/挂单量格式：万手缩略
+function fmtVol(v) {
+  if (v == null) return '-'
+  const n = Number(v)
+  if (n >= 10000) return (n / 10000).toFixed(1) + '万'
+  return String(Math.round(n))
+}
+
+function onFundChange() {
+  loadKline()
+  loadQuote()
 }
 
 const sourceLabel = computed(
@@ -230,21 +338,56 @@ function render() {
     Number(b.low_price),
     Number(b.high_price),
   ])
+  // 成交量柱：阳线红、阴线绿
+  const volData = bars.value.map((b) => ({
+    value: Number(b.volume || 0),
+    itemStyle: {
+      color:
+        Number(b.close_price) >= Number(b.open_price)
+          ? '#f56c6c'
+          : '#67c23a',
+    },
+  }))
   chart.setOption(
     {
       tooltip: { trigger: 'axis', axisPointer: { type: 'cross' } },
-      legend: { data: ['日K'], top: 0, left: 'center' }, // legend 置顶，避免被底部滑块挡住
-      grid: { left: 70, right: 20, top: 40, bottom: 60 },
-      xAxis: {
-        type: 'category',
-        data: dates,
-        boundaryGap: true,
-        axisLabel: { fontSize: 11, interval: 'auto', hideOverlap: true },
-      },
-      yAxis: { type: 'value', scale: true },
+      legend: { data: ['日K', '成交量'], top: 0, left: 'center' },
+      axisPointer: { link: [{ xAxisIndex: 'all' }] },
+      grid: [
+        { left: 70, right: 20, top: 40, height: '56%' }, // 主图：K线
+        { left: 70, right: 20, top: '72%', height: '14%' }, // 副图：成交量
+      ],
+      xAxis: [
+        {
+          type: 'category',
+          data: dates,
+          boundaryGap: true,
+          axisLabel: { show: false },
+        },
+        {
+          type: 'category',
+          gridIndex: 1,
+          data: dates,
+          boundaryGap: true,
+          axisLabel: { fontSize: 11, interval: 'auto', hideOverlap: true },
+        },
+      ],
+      yAxis: [
+        { type: 'value', scale: true },
+        {
+          type: 'value',
+          gridIndex: 1,
+          scale: true,
+          splitLine: { show: false },
+          axisLabel: {
+            fontSize: 10,
+            formatter: (v) => (v >= 10000 ? v / 10000 + '万' : v),
+          },
+        },
+      ],
       dataZoom: [
-        { type: 'inside', start: 0, end: 100 },
-        { type: 'slider', start: 0, end: 100, height: 20 },
+        { type: 'inside', xAxisIndex: [0, 1], start: 0, end: 100 },
+        { type: 'slider', xAxisIndex: [0, 1], start: 0, end: 100, height: 20 },
       ],
       series: [
         {
@@ -257,6 +400,13 @@ function render() {
             borderColor: '#f56c6c',
             borderColor0: '#67c23a',
           },
+        },
+        {
+          name: '成交量',
+          type: 'bar',
+          xAxisIndex: 1,
+          yAxisIndex: 1,
+          data: volData,
         },
       ],
     },
@@ -283,6 +433,7 @@ onMounted(async () => {
     endDate.value = ed
     render()
     await loadKline()
+    await loadQuote()
   } catch {
     // 拦截器已提示
   }
@@ -322,9 +473,175 @@ onBeforeUnmount(() => {
 .sync-result {
   margin-bottom: 12px;
 }
+.chart-wrap {
+  display: flex;
+  gap: 16px;
+  align-items: stretch;
+}
+.kline-area {
+  flex: 1;
+  min-width: 0;
+}
 .kline-chart {
   width: 100%;
-  height: 520px;
+  height: 560px;
+}
+.card-title {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+.card-title .title {
+  font-size: 16px;
+  font-weight: 600;
+  color: #303133;
+}
+.card-title .subtitle {
+  color: #909399;
+  font-size: 12px;
+}
+.quote-bar {
+  display: flex;
+  align-items: baseline;
+  gap: 16px;
+  padding: 12px 16px;
+  margin-bottom: 12px;
+  background: linear-gradient(90deg, #f5f7fa, #eef3fb);
+  border-radius: 8px;
+  flex-wrap: wrap;
+}
+.qb-name {
+  font-size: 15px;
+  font-weight: 600;
+  color: #303133;
+}
+.qb-code {
+  margin-left: 6px;
+  font-size: 12px;
+  font-weight: 400;
+  color: #909399;
+}
+.qb-price {
+  font-size: 26px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+.qb-change {
+  font-size: 14px;
+  font-weight: 500;
+}
+.qb-pct {
+  font-size: 13px;
+}
+.qb-meta {
+  color: #909399;
+  font-size: 12px;
+}
+.up {
+  color: #f56c6c; /* 涨红 */
+}
+.down {
+  color: #67c23a; /* 跌绿 */
+}
+.quote-panel {
+  width: 250px;
+  flex-shrink: 0;
+  border: 1px solid #e4e7ed;
+  border-radius: 8px;
+  background: #fff;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.04);
+  padding: 10px 12px;
+  font-size: 13px;
+}
+.qp-title {
+  font-weight: 600;
+  color: #303133;
+  margin-bottom: 8px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid #ebeef5;
+}
+.qp-group + .qp-group {
+  margin-top: 4px;
+}
+.qp-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  padding: 3px 0;
+}
+.qp-row.active {
+  outline: 1px solid #409eff;
+  outline-offset: -1px;
+  border-radius: 3px;
+}
+.qp-lvl {
+  width: 40px;
+  color: #909399;
+  flex-shrink: 0;
+}
+.qp-main {
+  position: relative;
+  display: flex;
+  align-items: center;
+  flex: 1;
+  min-width: 0;
+}
+.qp-depth {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  border-radius: 2px;
+}
+.qp-depth.sell {
+  right: 0;
+  background: rgba(103, 194, 58, 0.18); /* 卖盘绿淡 */
+}
+.qp-depth.buy {
+  left: 0;
+  background: rgba(245, 108, 108, 0.18); /* 买盘红淡 */
+}
+.qp-price {
+  flex: 1;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  z-index: 1;
+}
+.qp-price.sell {
+  color: #67c23a;
+}
+.qp-price.buy {
+  color: #f56c6c;
+}
+.qp-vol {
+  width: 52px;
+  text-align: right;
+  color: #909399;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  z-index: 1;
+}
+.qp-last {
+  display: flex;
+  align-items: baseline;
+  margin: 8px 0;
+  padding: 8px 10px;
+  background: #f5f7fa;
+  border-radius: 6px;
+}
+.qp-last .qp-lvl {
+  width: 40px;
+  color: #909399;
+}
+.qp-last-val {
+  flex: 1;
+  font-weight: 700;
+  font-size: 18px;
+  font-variant-numeric: tabular-nums;
+}
+.qp-change {
+  font-size: 13px;
+  font-weight: 500;
 }
 .entry-head {
   display: flex;

@@ -5,6 +5,17 @@
 <script setup>
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import * as echarts from 'echarts'
+import {
+  barSeries,
+  colors,
+  fmtNum,
+  grid,
+  legend,
+  lineSeries,
+  tooltip,
+  xAxis,
+  yAxis,
+} from '../utils/chart'
 
 // props：quarters(季度列表)、purchases(购买记录)、prices(fund_code->当前价)、funds(summary.funds)
 const props = defineProps({
@@ -68,30 +79,32 @@ function render() {
   const s = series.value
   chart.setOption(
     {
-      tooltip: { trigger: 'axis' },
-      legend: { data: ['总投入', '总市值', '权益占比'], top: 0, left: 'center' }, // legend 置顶
-      grid: { left: 70, right: 60, top: 40, bottom: 40 },
-      xAxis: { type: 'category', data: s.labels, axisLabel: { fontSize: 12 } },
+      tooltip,
+      legend: { ...legend, data: ['总投入', '总市值', '权益占比'] },
+      grid: { ...grid, right: 56 }, // 右侧预留权益占比%轴刻度
+      xAxis: xAxis(s.labels, { boundaryGap: true }),
       yAxis: [
-        { type: 'value', name: '金额（元）' },
-        {
-          type: 'value',
-          name: '权益占比（%）',
+        yAxis('金额（元）', { formatter: fmtNum }),
+        yAxis('权益占比（%）', {
+          formatter: (v) => v + '%',
           min: 0,
           max: 100,
-          splitLine: { show: false },
-        },
+          showSplitLine: false,
+        }),
       ],
       series: [
-        { name: '总投入', type: 'line', smooth: true, data: s.invested, itemStyle: { color: '#909399' } },
-        { name: '总市值', type: 'line', smooth: true, data: s.marketValue, itemStyle: { color: '#409eff' } },
-        {
-          name: '权益占比',
-          type: 'bar',
+        lineSeries('总投入', s.invested, colors.orange, {
+          gradient: false,
+          dashed: true,
+          tooltipFormatter: (v) => fmtNum(v, 2),
+        }),
+        lineSeries('总市值', s.marketValue, colors.blue, {
+          tooltipFormatter: (v) => fmtNum(v, 2),
+        }),
+        barSeries('权益占比', s.equityRatio, colors.purple, {
           yAxisIndex: 1,
-          data: s.equityRatio,
-          itemStyle: { color: '#e6a23c', opacity: 0.5 },
-        },
+          tooltipFormatter: (v) => (v == null ? '-' : v + '%'),
+        }),
       ],
     },
     true

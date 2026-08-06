@@ -82,6 +82,17 @@
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import * as echarts from 'echarts'
 import { fundsApi, holdingsApi } from '../api'
+import {
+  averageMarkLine,
+  colors,
+  dataZoom,
+  fmtNum,
+  gridSlim,
+  lineSeries,
+  tooltip,
+  xAxis,
+  yAxis,
+} from '../utils/chart'
 
 const fundOptions = ref([])
 const fundId = ref(null)
@@ -166,36 +177,19 @@ function render() {
   if (!chart) chart = echarts.init(chartEl.value)
   const dates = holdings.value.map((h) => h.trade_date)
   const values = holdings.value.map((h) => Number(h.equity_amount))
-  const hands = holdings.value.map((h) => h.total_hands)
   chart.setOption(
     {
-      tooltip: { trigger: 'axis' },
-      legend: { data: ['权益市值'], top: 0, left: 'center' }, // legend 置顶
-      grid: { left: 70, right: 20, top: 40, bottom: 60 },
-      xAxis: {
-        type: 'category',
-        data: dates,
-        boundaryGap: false,
-        axisLabel: { fontSize: 11, interval: 'auto', hideOverlap: true },
-      },
-      yAxis: { type: 'value', name: '权益金额（元）', scale: true },
-      dataZoom: [
-        { type: 'inside', start: 0, end: 100 },
-        { type: 'slider', start: 0, end: 100, height: 20, bottom: 10 },
-      ],
+      tooltip,
+      grid: gridSlim,
+      xAxis: xAxis(dates),
+      yAxis: yAxis('权益金额（元）', { formatter: fmtNum }),
+      dataZoom,
       series: [
         {
-          name: '权益市值',
-          type: 'line',
-          smooth: true,
-          data: values,
-          areaStyle: { opacity: 0.12 },
-          itemStyle: { color: '#409eff' },
-          markLine: {
-            symbol: 'none',
-            data: [{ type: 'average', name: '平均' }],
-            lineStyle: { color: '#c0c4cc', type: 'dashed' },
-          },
+          ...lineSeries('权益市值', values, colors.blue, {
+            tooltipFormatter: (v) => fmtNum(v, 2),
+          }),
+          markLine: averageMarkLine(),
         },
       ],
     },

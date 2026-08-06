@@ -71,6 +71,17 @@ import { onBeforeUnmount, onMounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import * as echarts from 'echarts'
 import { cashApi } from '../api'
+import {
+  averageMarkLine,
+  colors,
+  dataZoom,
+  fmtNum,
+  gridSlim,
+  lineSeries,
+  tooltip,
+  xAxis,
+  yAxis,
+} from '../utils/chart'
 
 const startDate = ref('')
 const endDate = ref('')
@@ -146,27 +157,17 @@ function render() {
   const cash = rows.value.map((r) => Number(r.cash_amount))
   chart.setOption(
     {
-      tooltip: { trigger: 'axis' },
-      grid: { left: 70, right: 30, top: 30, bottom: 60 },
-      xAxis: {
-        type: 'category',
-        data: dates,
-        boundaryGap: false,
-        axisLabel: { fontSize: 11, interval: 'auto', hideOverlap: true },
-      },
-      yAxis: { type: 'value', name: '现金（元）', scale: true },
-      dataZoom: [
-        { type: 'inside', start: 0, end: 100 },
-        { type: 'slider', start: 0, end: 100, height: 22, bottom: 12 },
-      ],
+      tooltip,
+      grid: gridSlim,
+      xAxis: xAxis(dates),
+      yAxis: yAxis('现金（元）', { formatter: fmtNum }),
+      dataZoom,
       series: [
         {
-          name: '现金余额',
-          type: 'line',
-          smooth: true,
-          data: cash,
-          areaStyle: { opacity: 0.12 },
-          itemStyle: { color: '#409eff' },
+          ...lineSeries('现金余额', cash, colors.blue, {
+            tooltipFormatter: (v) => fmtNum(v, 2),
+          }),
+          markLine: averageMarkLine(),
         },
       ],
     },

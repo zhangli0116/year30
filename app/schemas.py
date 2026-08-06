@@ -332,8 +332,13 @@ class QuoteOut(BaseModel):
     name: str
     price: Optional[float] = None  # 最新价
     last: Optional[float] = None  # 最新价
-    bid: list[Optional[float]] = Field(default_factory=list)  # 买1..买5
-    ask: list[Optional[float]] = Field(default_factory=list)  # 卖1..卖5
+    prev_close: Optional[float] = None  # 昨收
+    change: Optional[float] = None  # 涨跌额
+    change_pct: Optional[float] = None  # 涨跌幅(%)
+    bid: list[Optional[float]] = Field(default_factory=list)  # 买1..买5 价
+    ask: list[Optional[float]] = Field(default_factory=list)  # 卖1..卖5 价
+    bid_vol: list[Optional[float]] = Field(default_factory=list)  # 买1..买5 挂单量(手)
+    ask_vol: list[Optional[float]] = Field(default_factory=list)  # 卖1..卖5 挂单量(手)
     time: Optional[str] = None
 
 

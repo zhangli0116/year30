@@ -23,9 +23,11 @@ _QUOTE_URL = "https://qt.gtimg.cn/q={codes}"
 
 _LINE_RE = re.compile(r'^v_(\w+)="(.*)"\s*;?\s*$')
 
-# 买1..买5 / 卖1..卖5 价格对应的 ~ 拆分索引
+# 买1..买5 / 卖1..卖5 价格与对应挂单量(手) 的 ~ 拆分索引
 _BID_IDX = [9, 11, 13, 15, 17]
+_BID_VOL_IDX = [10, 12, 14, 16, 18]
 _ASK_IDX = [19, 21, 23, 25, 27]
+_ASK_VOL_IDX = [20, 22, 24, 26, 28]
 
 
 def _to_float(value: str) -> float | None:
@@ -70,14 +72,26 @@ def fetch_quotes(codes: list[str], timeout: int = 8) -> list[dict]:
         last = _to_float(parts[3])
         if last is None:
             continue
+        prev_close = _to_float(parts[4])
+        change = last - prev_close if prev_close is not None else None
+        change_pct = (
+            round(change / prev_close * 100, 2)
+            if change is not None and prev_close
+            else None
+        )
         quotes.append(
             {
                 "code": parts[2],
                 "name": parts[1],
                 "last": last,
                 "price": last,
+                "prev_close": prev_close,
+                "change": change,
+                "change_pct": change_pct,
                 "bid": [_to_float(parts[i]) for i in _BID_IDX],
                 "ask": [_to_float(parts[i]) for i in _ASK_IDX],
+                "bid_vol": [_to_float(parts[i]) for i in _BID_VOL_IDX],
+                "ask_vol": [_to_float(parts[i]) for i in _ASK_VOL_IDX],
                 "time": _format_time(parts[30]),
             }
         )

@@ -6,6 +6,17 @@
 import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import * as echarts from 'echarts'
 import { cashApi, holdingsApi } from '../api'
+import {
+  colors,
+  dataZoom,
+  fmtNum,
+  grid,
+  legend,
+  lineSeries,
+  tooltip,
+  xAxis,
+  yAxis,
+} from '../utils/chart'
 
 // 3 条走势（按日）：
 //   总权益：历史来自 fund_holding_daily（跨基金求和），今日用实时价×份额覆盖
@@ -77,24 +88,23 @@ function render() {
   if (!chart) chart = echarts.init(chartEl.value)
   chart.setOption(
     {
-      tooltip: { trigger: 'axis' },
-      legend: { data: ['总权益', '总资产（权益+现金）', '累积投入'], top: 0, left: 'center' },
-      grid: { left: 70, right: 30, top: 40, bottom: 60 },
-      xAxis: {
-        type: 'category',
-        data: series.value.dates,
-        boundaryGap: false,
-        axisLabel: { fontSize: 11, interval: 'auto', hideOverlap: true },
-      },
-      yAxis: { type: 'value', name: '金额（元）', scale: true },
-      dataZoom: [
-        { type: 'inside', start: 0, end: 100 },
-        { type: 'slider', start: 0, end: 100, height: 22, bottom: 12 },
-      ],
+      tooltip,
+      legend: { ...legend, data: ['总权益', '总资产（权益+现金）', '累积投入'] },
+      grid,
+      xAxis: xAxis(series.value.dates),
+      yAxis: yAxis('金额（元）', { formatter: fmtNum }),
+      dataZoom,
       series: [
-        { name: '总权益', type: 'line', smooth: true, data: series.value.equity, areaStyle: { opacity: 0.1 }, itemStyle: { color: '#409eff' } },
-        { name: '总资产（权益+现金）', type: 'line', smooth: true, data: series.value.asset, itemStyle: { color: '#67c23a' } },
-        { name: '累积投入', type: 'line', smooth: true, data: series.value.invested, itemStyle: { color: '#e6a23c' } },
+        lineSeries('总权益', series.value.equity, colors.blue, { tooltipFormatter: (v) => fmtNum(v, 2) }),
+        lineSeries('总资产（权益+现金）', series.value.asset, colors.green, {
+          gradient: false,
+          tooltipFormatter: (v) => fmtNum(v, 2),
+        }),
+        lineSeries('累积投入', series.value.invested, colors.orange, {
+          gradient: false,
+          dashed: true,
+          tooltipFormatter: (v) => fmtNum(v, 2),
+        }),
       ],
     },
     true
