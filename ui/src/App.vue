@@ -35,6 +35,10 @@
           <el-icon><RefreshLeft /></el-icon>
           <span>卖出式再平衡</span>
         </el-menu-item>
+        <el-menu-item index="/rebalance-check">
+          <el-icon><Odometer /></el-icon>
+          <span>再平衡体检</span>
+        </el-menu-item>
       </el-menu>
     </el-aside>
 

@@ -126,6 +126,19 @@ CREATE TABLE fund_cash_daily (
 ) ENGINE = InnoDB COMMENT = '每日现金流量表';
 
 -- --------------------------------------------------
+-- 表 7：系统键值配置（如再平衡判定阈值）
+-- --------------------------------------------------
+CREATE TABLE app_setting (
+    id         INT UNSIGNED  NOT NULL AUTO_INCREMENT COMMENT '主键ID',
+    `key`      VARCHAR(64)   NOT NULL COMMENT '配置键',
+    `value`    VARCHAR(255)  NOT NULL COMMENT '配置值',
+    created_at DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    updated_at DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+    PRIMARY KEY (id),
+    UNIQUE KEY uk_key (`key`)
+) ENGINE = InnoDB COMMENT = '系统键值配置';
+
+-- --------------------------------------------------
 -- 示例数据
 -- --------------------------------------------------
 INSERT INTO fund (fund_code, fund_name, exchange) VALUES

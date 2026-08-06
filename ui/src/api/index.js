@@ -104,3 +104,12 @@ export const syncApi = {
   // POST /api/v1/sync/all —— 一键同步全部行情并生成权益/现金流
   all: () => request.post('/sync/all'),
 }
+
+export const rebalanceApi = {
+  // GET /api/v1/rebalance/check → {params, total, funds:[...], cash}
+  check: () => request.get('/rebalance/check'),
+  // GET /api/v1/rebalance/params → 判定参数
+  getParams: () => request.get('/rebalance/params'),
+  // PUT /api/v1/rebalance/params {r_band?, min_abs?, max_abs?, amount_floor?}
+  saveParams: (data) => request.put('/rebalance/params', data),
+}

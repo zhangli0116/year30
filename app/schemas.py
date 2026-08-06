@@ -388,3 +388,51 @@ class SyncAllOut(BaseModel):
     failures: int = Field(0, description="失败的基金数")
     range_start: Optional[date] = None
     range_end: Optional[date] = None
+
+
+# =========================================================
+# 再平衡体检
+# =========================================================
+
+
+class RebalanceParams(BaseModel):
+    """偏离判定参数：阈值(%) = clamp(目标% × r_band/100, min_abs, max_abs)。"""
+
+    r_band: float = 15.0  # 相对带系数(%)
+    min_abs: float = 1.0  # 绝对底线(%)
+    max_abs: float = 3.0  # 绝对上限(%)
+    amount_floor: float = 300.0  # 偏离金额底线(元)
+
+
+class RebalanceParamsUpdate(BaseModel):
+    r_band: Optional[float] = Field(None, gt=0, le=100)
+    min_abs: Optional[float] = Field(None, ge=0, le=100)
+    max_abs: Optional[float] = Field(None, ge=0, le=100)
+    amount_floor: Optional[float] = Field(None, ge=0)
+
+
+class RebalanceFundOut(BaseModel):
+    fund_id: int
+    fund_code: str
+    fund_name: str
+    price: Optional[float] = None  # 现价（计划算手数用）
+    target: Optional[float] = None  # 目标比例(%)
+    real: float  # 当前占比(%)
+    deviation: float  # 偏离(百分点)
+    deviation_amount: float  # 偏离金额(元)
+    threshold: Optional[float] = None  # 判定阈值(%)，未设目标时 None
+
+
+class RebalanceCashOut(BaseModel):
+    target: float
+    real: float
+    deviation: float
+    deviation_amount: float
+    threshold: float
+
+
+class RebalanceOut(BaseModel):
+    params: RebalanceParams
+    total: float
+    funds: list[RebalanceFundOut]
+    cash: RebalanceCashOut

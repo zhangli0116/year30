@@ -151,3 +151,19 @@ class PurchaseRecord(Base):
 
     fund: Mapped[Fund] = relationship(back_populates="purchases")
     quarter: Mapped[Optional[Quarter]] = relationship(back_populates="purchases")
+
+
+class AppSetting(Base):
+    """系统键值配置（如再平衡判定阈值），供页面读写。"""
+
+    __tablename__ = "app_setting"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    key: Mapped[str] = mapped_column(String(64), unique=True, nullable=False, comment="配置键")
+    value: Mapped[str] = mapped_column(String(255), nullable=False, comment="配置值")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, server_default=func.now(), comment="创建时间"
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, server_default=func.now(), onupdate=func.now(), comment="更新时间"
+    )

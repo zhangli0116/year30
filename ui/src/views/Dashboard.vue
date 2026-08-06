@@ -89,7 +89,12 @@
       <template #header>
         <div class="card-header">
           <span>再平衡状态</span>
-          <span class="header-note">当前市值占比 vs 目标占比（含现金）；±1% 内视为达标，可到「季度计算器」调整配比</span>
+          <div class="header-right">
+            <span class="header-note">当前市值占比 vs 目标占比（含现金）；超出判定阈值才提示，可调参数与计划</span>
+            <el-button size="small" link type="primary" @click="router.push('/rebalance-check')">
+              查看详情 →
+            </el-button>
+          </div>
         </div>
       </template>
       <div class="rb-body">
@@ -228,10 +233,12 @@
 
 <script setup>
 import { computed, onMounted, ref } from 'vue'
+import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import QuarterChart from '../components/QuarterChart.vue'
 import TotalEquityChart from '../components/TotalEquityChart.vue'
-import { fundsApi, purchasesApi, quartersApi, quotesApi, syncApi, xirrApi } from '../api'
+import { fundsApi, purchasesApi, quartersApi, quotesApi, rebalanceApi, syncApi, xirrApi } from '../api'
+import { judge, thresholdFor } from '../utils/rebalance'
 
 const CASH_CODE = '000000'
 
@@ -247,6 +254,9 @@ const xirrData = ref({
   account: { xirr: null, invested: 0, current_value: 0, gain: 0, gain_pct: null, start_date: null },
   funds: [],
 })
+// 再平衡判定参数（默认与后端 config 一致，加载后覆盖）
+const rebalanceParams = ref({ r_band: 15, min_abs: 1, max_abs: 3, amount_floor: 300 })
+const router = useRouter()
 
 // 现金余额 = Σ quarter.cash_amount；累计投入 = Σ quarter.budget
 const cashBalance = computed(() =>
@@ -315,7 +325,7 @@ const rows = computed(() => {
   const totalMv = arr.reduce((s, r) => s + (r.mv ?? 0), 0)
   arr.forEach((r) => {
     r.realRatio = r.mv != null && totalMv > 0 ? (r.mv / totalMv) * 100 : null
-    r.ratioStatus = ratioStatusOf(r)
+    r.ratioStatus = ratioStatusOf(r, totalMv)
   })
   return arr
 })
@@ -327,13 +337,14 @@ const todayEquity = computed(() =>
     .reduce((s, r) => s + (r.mv || 0), 0)
 )
 
-// 市值占比 vs 规定比例：超配(above)/低配(below)/正常(normal)，±1 个百分点内视为正常
-function ratioStatusOf(row) {
+// 市值占比 vs 规定比例：超配(above)/低配(below)/正常(normal)。
+// 判定用共享模块（相对带+底线+上限+金额底线），与「再平衡体检」页一致。
+function ratioStatusOf(row, totalMvLocal) {
   if (row.realRatio == null || row.target_ratio == null) return 'normal'
-  const diff = row.realRatio - Number(row.target_ratio)
-  if (diff > 1) return 'above'
-  if (diff < -1) return 'below'
-  return 'normal'
+  const dev = row.realRatio - Number(row.target_ratio)
+  const threshold = thresholdFor(row.target_ratio, rebalanceParams.value)
+  const devAmount = totalMvLocal != null ? (dev / 100) * totalMvLocal : null
+  return judge(dev, threshold, rebalanceParams.value, devAmount)
 }
 
 function ratioTitle(row) {
@@ -391,16 +402,18 @@ async function loadQuotes() {
 async function loadData() {
   loading.value = true
   try {
-    const [sumData, quarterData, purchaseData, xirr] = await Promise.all([
+    const [sumData, quarterData, purchaseData, xirr, rbParams] = await Promise.all([
       fundsApi.summary(),
       quartersApi.list(),
       purchasesApi.list({ page: 1, page_size: 100 }), // 含买卖，供趋势图累计份额
       xirrApi.get().catch(() => ({ account: xirrData.value.account, funds: [] })),
+      rebalanceApi.getParams().catch(() => rebalanceParams.value),
     ])
     summary.value = sumData
     quarters.value = quarterData || []
     purchases.value = purchaseData?.items || []
     xirrData.value = xirr
+    if (rbParams) rebalanceParams.value = rbParams
     await loadQuotes()
   } finally {
     loading.value = false

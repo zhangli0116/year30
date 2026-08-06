@@ -16,6 +16,7 @@ from app.routers import price as price_router
 from app.routers import purchase as purchase_router
 from app.routers import quarter as quarter_router
 from app.routers import quote as quote_router
+from app.routers import rebalance as rebalance_router
 from app.routers import sync as sync_router
 from app.routers import xirr as xirr_router
 from app.schemas import ApiResponse, success
@@ -81,6 +82,7 @@ app.include_router(price_router.router)
 app.include_router(purchase_router.router)
 app.include_router(quarter_router.router)
 app.include_router(quote_router.router)
+app.include_router(rebalance_router.router)
 app.include_router(sync_router.router)
 app.include_router(xirr_router.router)
 

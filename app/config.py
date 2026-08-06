@@ -30,6 +30,13 @@ class Settings(BaseSettings):
     SYNC_HOUR: int = 17
     SYNC_MINUTE: int = 30
 
+    # ---- 再平衡判定默认参数（可被 app_setting 表覆盖）----
+    # 阈值(%) = clamp(目标% × RB_R_BAND, RB_MIN_ABS, RB_MAX_ABS)
+    RB_R_BAND: float = 15.0  # 相对带系数(%)
+    RB_MIN_ABS: float = 1.0  # 绝对底线(%)
+    RB_MAX_ABS: float = 3.0  # 绝对上限(%)
+    RB_AMOUNT_FLOOR: float = 300.0  # 偏离金额底线(元)，低于此不提示
+
     model_config = SettingsConfigDict(
         env_file=_BASE_DIR / ".env",
         env_file_encoding="utf-8",

@@ -8,6 +8,7 @@ import Holdings from '../views/Holdings.vue'
 import Prices from '../views/Prices.vue'
 import Purchases from '../views/Purchases.vue'
 import Rebalance from '../views/Rebalance.vue'
+import RebalanceCheck from '../views/RebalanceCheck.vue'
 
 // 使用 hash 模式：后续若把构建产物交给 FastAPI 托管，也无需服务端路由配置
 const router = createRouter({
@@ -21,6 +22,7 @@ const router = createRouter({
     { path: '/purchases', name: 'purchases', component: Purchases, meta: { title: '购买记录' } },
     { path: '/calculator', name: 'calculator', component: Calculator, meta: { title: '季度计算器' } },
     { path: '/rebalance', name: 'rebalance', component: Rebalance, meta: { title: '卖出式再平衡' } },
+    { path: '/rebalance-check', name: 'rebalance-check', component: RebalanceCheck, meta: { title: '再平衡体检' } },
   ],
 })
 
