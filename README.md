@@ -1,6 +1,6 @@
 # 指数基金定投记录
 
-基于 FastAPI + SQLAlchemy + Vue3 的个人基金定投记录系统：每季度定投多只指数基金，支持买入/卖出、手续费、季度预算、历史行情、每日权益/现金流趋势、再平衡规划。
+基于 FastAPI + SQLAlchemy + Vue3 的个人基金定投记录系统：每季度定投多只指数基金，支持买入/卖出、手续费、季度预算、历史行情、实时五档盘口、每日权益/现金流趋势、再平衡规划。
 
 ## 快速开始
 
@@ -36,7 +36,7 @@ npm run dev        # http://localhost:5173
 
 前端通过 Vite 代理把 `/api` 转发到后端（同样读根目录 .env，改 `HTTP_PORT` 两边自动同步）。
 
-页面：汇总（总权益/总资产/累积投入走势、持仓汇总）、基金管理、购买记录（按季度折叠）、季度计算器（买入式再平衡）、卖出式再平衡、基金价格（K线+同步）、每日权益流水、每日现金流量。
+页面：汇总（总权益/总资产/累积投入走势、持仓汇总）、基金管理、购买记录（按季度折叠）、季度计算器（买入式再平衡）、卖出式再平衡、基金价格（K线+成交量+实时五档盘口+同步）、每日权益流水、每日现金流量。各线图统一走 `ui/src/utils/chart.js` 的共享样式，保证风格一致。
 
 构建产物：`cd ui && npm run build`，输出到 `ui/dist/`。
 
@@ -63,7 +63,7 @@ app/
 │   └── quarter.py     #   季度 CRUD + 重算（equity/total_fee/cash）
 ├── services/
 │   ├── price.py       # 价格数据源抽象层（PriceSource 基类 + TencentPriceSource + 注册表）
-│   └── quote.py       # 实时行情五档盘口（腾讯公开接口转发）
+│   └── quote.py       # 实时行情：昨收/涨跌额/涨跌幅 + 买卖五档价与挂单量（腾讯公开接口转发）
 └── routers/           # API 路由层
     ├── cash.py        #   /api/v1/cash
     ├── fund.py        #   /api/v1/funds
@@ -79,6 +79,8 @@ ui/
 └── src/
     ├── api/index.js
     ├── components/    # QuarterChart / TotalEquityChart
+    ├── utils/
+    │   └── chart.js   # 共享 ECharts 样式工具（调色板/折线/柱/渐变/均值线/格式化）
     ├── views/         # Dashboard / Funds / Purchases / Calculator / Rebalance / Prices / Holdings / Cash
     └── router/index.js
 ```
@@ -129,7 +131,7 @@ ui/
 ### 实时行情 quotes
 | 方法 | 路径 | 说明 |
 |---|---|---|
-| GET | `/quotes` | 实时五档盘口（`codes=513500,513100`） |
+| GET | `/quotes` | 实时行情（`codes=513500,513100`），返回 `{quotes: [...]}`，每项含：最新价/昨收/涨跌额/涨跌幅、买卖 1..5 档价与挂单量（手）、时间 |
 
 ### 历史价格 prices
 | 方法 | 路径 | 说明 |
