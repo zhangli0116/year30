@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session
 
 from app import crud, models
 from app.logger import logger
-from app.services import price as price_service
+from app.services import datasource
 
 CASH_CODE = "000000"
 
@@ -27,7 +27,7 @@ def sync_all(db: Session) -> dict:
     起点：该基金在该方案下最早购买日（无购买则跳过）；现金流起点：该方案最早季度开始日。
     """
     today = date.today()
-    source = price_service.get_source("tencent")
+    provider = datasource.get_provider(db)  # 跟随「当前数据源」（设置页切换）
 
     plans = [p for p in crud.plan.list_plans(db) if p.active]
     if not plans:
@@ -85,8 +85,9 @@ def sync_all(db: Session) -> dict:
                 continue
             seen_funds.add(fund.id)
             try:
-                bars = source.fetch_daily(fund.fund_code, start, today)
-                inserted, _existing = crud.price.upsert_bars(db, fund.id, bars, source.name)
+                symbol = datasource.fund_symbol(fund.exchange, fund.fund_code)
+                bars = provider.fetch_daily(symbol, start, today)
+                inserted, _existing = crud.price.upsert_bars(db, fund.id, bars, provider.name)
                 prices_inserted += inserted
                 # 增量：只补缺失交易日，不覆盖已有权益流水
                 holdings_generated += crud.holding.generate(

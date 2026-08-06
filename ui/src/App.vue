@@ -29,15 +29,23 @@
         </el-menu-item>
         <el-menu-item index="/calculator">
           <el-icon><Operation /></el-icon>
-          <span>定投计算器</span>
+          <span>定投与再平衡计算器</span>
         </el-menu-item>
         <el-menu-item index="/rebalance">
           <el-icon><RefreshLeft /></el-icon>
-          <span>卖出式再平衡</span>
+          <span>临时再平衡</span>
         </el-menu-item>
         <el-menu-item index="/rebalance-check">
           <el-icon><Odometer /></el-icon>
           <span>再平衡体检</span>
+        </el-menu-item>
+        <el-menu-item index="/backtest">
+          <el-icon><DataLine /></el-icon>
+          <span>方案回测</span>
+        </el-menu-item>
+        <el-menu-item index="/settings">
+          <el-icon><Setting /></el-icon>
+          <span>系统设置</span>
         </el-menu-item>
       </el-menu>
     </el-aside>

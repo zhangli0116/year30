@@ -13,7 +13,6 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app import models
-from app.services.quote import fetch_quotes
 
 
 def xnpv(rate: float, flows: list[tuple[date, float]]) -> float:
@@ -198,10 +197,15 @@ def twr_plan(db: Session, plan_id: int, today: date | None = None) -> dict | Non
 
 
 def _price_map(db: Session, codes: list[str]) -> dict[str, float]:
-    """批量现价：优先实时行情，缺失/失败回退最新历史收盘价。"""
+    """批量现价：优先当前数据源的实时行情，缺失/失败回退最新历史收盘价。"""
+    from app.services import datasource
+
     prices: dict[str, float] = {}
     try:
-        quotes = fetch_quotes(codes)
+        provider = datasource.get_provider(db)
+        symbol_map = datasource.resolve_symbols(db, codes)
+        symbols = [symbol_map[c] for c in codes if c in symbol_map]
+        quotes = provider.fetch_quotes(symbols)
         for q in quotes:
             if q.get("last") is not None:
                 prices[q["code"]] = float(q["last"])

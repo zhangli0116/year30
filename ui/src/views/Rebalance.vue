@@ -11,7 +11,7 @@
     <el-card shadow="never">
       <template #header>
         <div class="card-header">
-          <span>卖出式再平衡</span>
+          <span>临时再平衡</span>
           <div class="header-right">
             <span v-if="quoteTime" class="header-note">行情更新：{{ quoteTime }}</span>
             <el-button type="primary" size="small" :loading="loadingQuote" @click="fetchPrices">
@@ -22,31 +22,20 @@
       </template>
 
       <div class="intro-note">
-        拖动「目标占比」滑块（默认=规定比例），<b>超配的基金卖出、低配的买入</b>，卖出回笼并入现金池后统一分配，
-        现金目标 = 100 − 权益总和；手续费 = max(5, 金额×费率)。用于买入式无法纠正的超配仓位。
+        用于<b>每年年末再平衡</b>，或<b>突发行情暴涨/暴跌</b>时的临时再平衡。
+        拖动「目标占比」滑块（默认=规定比例），按当前持仓判定：超配的基金卖出、低配的买入，
+        卖出回笼与现有现金并入现金池后统一分配；现金目标 = 100 − 权益总和；手续费 = max(5, 金额×费率)。
+        操作记录归属一个新建季度（如「2026年末再平衡」），可在「购买记录」页查询。
       </div>
 
       <el-row :gutter="16" class="cards">
-        <el-col :span="6">
+        <el-col :span="8">
           <el-card shadow="hover">
             <div class="stat-label">现有总市值</div>
             <div class="stat-value">¥ {{ money(plan.currentTotal) }}</div>
           </el-card>
         </el-col>
-        <el-col :span="6">
-          <el-card shadow="hover">
-            <div class="stat-label">本季预算（元）</div>
-            <el-input-number
-              v-model="budget"
-              :min="0"
-              :step="100"
-              :precision="0"
-              :controls="false"
-              style="width: 100%"
-            />
-          </el-card>
-        </el-col>
-        <el-col :span="6">
+        <el-col :span="8">
           <el-card shadow="hover">
             <div class="stat-label">手续费费率（%）</div>
             <div class="rate-line">
@@ -74,7 +63,7 @@
             <div class="fee-hint">手续费 = max(5, 金额×费率)</div>
           </el-card>
         </el-col>
-        <el-col :span="6">
+        <el-col :span="8">
           <el-card shadow="hover">
             <div class="stat-label">再平衡后现金池</div>
             <div class="stat-value" :class="plan.cashAfter < 0 ? 'down' : ''">
@@ -152,9 +141,26 @@
         <span>｜现金池 <b class="cash">¥{{ money(plan.cashAfter) }}</b></span>
       </div>
 
+      <el-alert
+        v-if="plan.cashSurplus > 100"
+        type="info"
+        :closable="false"
+        class="cash-warn"
+        title="现金高于目标"
+      >
+        再平衡后现金 <b>¥{{ money(plan.cashAfter) }}</b>（<b>≈ {{ plan.cashPct.toFixed(2) }}%</b>）＞ 目标
+        {{ plan.cashTargetPct.toFixed(1) }}%（¥{{ money(plan.cashTargetValue) }}），高出
+        <b>¥{{ money(plan.cashSurplus) }}</b>。
+        现有现金多于把基金补到目标所需——把滑块目标占比调高，现金占比会随之下降。
+      </el-alert>
+
       <el-divider />
 
       <div class="submit-bar">
+        <el-select v-model="rebalanceType" style="width: 160px">
+          <el-option label="年末再平衡" value="年末再平衡" />
+          <el-option label="突发再平衡" value="突发再平衡" />
+        </el-select>
         <el-date-picker
           v-model="rebalanceDate"
           type="date"
@@ -163,7 +169,7 @@
           style="width: 150px"
         />
         <el-button type="warning" size="large" :disabled="!hasAction" @click="openConfirm">
-          执行卖出式再平衡
+          执行临时再平衡
         </el-button>
         <span v-if="!hasAction" class="muted">（当前无需买卖，比例已达标）</span>
       </div>
@@ -172,22 +178,18 @@
     <!-- 确认弹窗 -->
     <el-dialog
       v-model="confirmVisible"
-      title="执行卖出式再平衡"
+      title="执行临时再平衡"
       width="560px"
       :close-on-click-modal="false"
     >
       <div class="entry-head">
         <div class="entry-head-item">
           <span class="entry-label">周期</span>
-          <b class="entry-period">{{ periodFromDate(rebalanceDate) }}</b>
+          <b class="entry-period">{{ rebalancePeriod(rebalanceDate, rebalanceType) }}</b>
         </div>
         <div class="entry-head-item">
           <span class="entry-label">操作日期</span>
           <b>{{ rebalanceDate }}</b>
-        </div>
-        <div class="entry-head-item">
-          <span class="entry-label">预算</span>
-          <b>¥{{ money(budget) }}</b>
         </div>
       </div>
 
@@ -220,7 +222,7 @@
         <span>｜手续费 <b>−¥{{ money(plan.totalFee) }}</b></span>
         <span>｜现金池 <b class="cash">¥{{ money(plan.cashAfter) }}</b></span>
       </div>
-      <div class="entry-hint">确认后：卖出记录 type=sell、买入记录 type=buy 一并录入「{{ periodFromDate(rebalanceDate) }}」，季度权益/现金自动重算。</div>
+      <div class="entry-hint">确认后：卖出记录 type=sell、买入记录 type=buy 一并录入「{{ rebalancePeriod(rebalanceDate, rebalanceType) }}」，季度权益/现金自动重算。</div>
 
       <template #footer>
         <el-button @click="confirmVisible = false">再想想</el-button>
@@ -243,13 +245,13 @@ const CASH_CODE = '000000'
 // 当前选中的定投方案（本页的「方案」指卖出式再平衡计划 plan，注意区分）
 const planId = ref(null)
 
-const budget = ref(0)
 const buyFeeRate = ref(0.03) // 买入费率（%）
 const sellFeeRate = ref(0.07) // 卖出费率（%）
 const loadingQuote = ref(false)
 const quoteTime = ref(null)
 const submitting = ref(false)
 const rebalanceDate = ref(todayStr())
+const rebalanceType = ref('年末再平衡') // 年末再平衡 / 突发再平衡
 const fundRows = ref([])
 const cashCurrent = ref(0)
 
@@ -262,11 +264,10 @@ function todayStr() {
   return `${d.getFullYear()}-${m}-${day}`
 }
 
-function periodFromDate(dateStr) {
-  if (!dateStr) return ''
-  const d = new Date(dateStr)
-  const q = Math.floor(d.getMonth() / 3) + 1
-  return d.getFullYear() + 'Q' + q
+// 季度标识 = 操作年份 + 类型，如「2026年末再平衡」「2026突发再平衡」（唯一，购买记录页可按季度查询）
+function rebalancePeriod(dateStr, type) {
+  if (!dateStr || !type) return ''
+  return `${new Date(dateStr).getFullYear()}${type}`
 }
 
 // 滑块上限：单个滑块最大 = 100 − 其他基金目标之和，保证权益类总和 ≤ 100%（现金 ≥ 0）
@@ -277,15 +278,17 @@ function sliderMax(row) {
   return Math.max(0, 100 - others)
 }
 
-// 再平衡方案：先卖超配（四舍五入到整手），买入受「现金池 − 目标现金」约束，
-// 保证再平衡后现金回到目标比例（如 15%），而不是现金成剩余值。目标占比可滑动（默认=规定比例）。
+// 再平衡方案：先卖超配（四舍五入到整手），买入受「现金池 − 目标现金」约束。
+// 超配/低配按「当前总资产」判定（不含预算）——避免大预算把每只基金的目标市值整体抬高、
+// 导致接近目标的持仓全被判为低配（全是买入）而卖不出超配。预算只进现金池，未部署部分留在现金。
 // 派生值先在局部数组算/读（避免读写响应式行造成自依赖），最后回写源行供模板读取。
 const plan = computed(() => {
   const rows = fundRows.value
   const currentTotal = rows.reduce((s, r) => s + (r.currentMV || 0), 0) + cashCurrent.value
-  const finalTotal = currentTotal + budget.value
+  const finalTotal = currentTotal // 纯再平衡，不注入新预算
+  const targetBasis = currentTotal // 买/卖目标按当前持仓判定
   const cashTargetPct = Math.max(0, 100 - rows.reduce((s, r) => s + Number(r.targetPct || 0), 0))
-  const cashTargetValue = (finalTotal * cashTargetPct) / 100
+  const cashTargetValue = (targetBasis * cashTargetPct) / 100
 
   // 1) 派生值先算到局部数组（超配基金四舍五入到整手卖出）
   const derived = rows.map((r) => {
@@ -293,7 +296,7 @@ const plan = computed(() => {
     const handPrice = r.handPrice
     const currentMV = r.currentMV || 0
     const targetPct = Number(r.targetPct || 0)
-    const targetMV = (finalTotal * targetPct) / 100
+    const targetMV = (targetBasis * targetPct) / 100
     const diff = targetMV - currentMV
     const d = { row: r, price, handPrice, targetMV, diff, action: 'hold', actHands: 0, actPrincipal: 0, fee: 0 }
     if (price && diff < 0) {
@@ -311,10 +314,10 @@ const plan = computed(() => {
     return d
   })
 
-  // 2) 现金池与可用于买入的额度（现金先保住目标比例）
+  // 2) 现金池与可用于买入的额度（现金先保住目标比例；纯再平衡不注入预算）
   const sellProceeds = derived.reduce((s, d) => s + (d.action === 'sell' ? d.actPrincipal : 0), 0)
   const sellFee = derived.reduce((s, d) => s + (d.action === 'sell' ? d.fee : 0), 0)
-  const pool = cashCurrent.value + budget.value + sellProceeds - sellFee
+  const pool = cashCurrent.value + sellProceeds - sellFee
   const availableForBuy = pool - cashTargetValue
 
   // 3) 低配基金买入，额度受 availableForBuy 限制（按缺口比例分配）
@@ -344,6 +347,7 @@ const plan = computed(() => {
   const cashAfter = pool - finalBuy - (derived.reduce((s, d) => s + (d.action === 'buy' ? d.fee : 0), 0))
   const totalAfter = finalTotal - finalFee
   const cashPct = totalAfter > 0 ? (cashAfter / totalAfter) * 100 : null
+  const cashSurplus = cashAfter - cashTargetValue // 高于目标现金的部分（预算未部署）
 
   // 4) 回写源行，供模板读取（滑块 v-model 直接作用在源行 targetPct 上驱动重算）
   derived.forEach((d) => {
@@ -367,6 +371,8 @@ const plan = computed(() => {
     cashAfter,
     cashPct,
     cashTargetPct,
+    cashTargetValue,
+    cashSurplus,
   }
 })
 
@@ -416,18 +422,19 @@ function openConfirm() {
 async function execute() {
   submitting.value = true
   try {
-    const period = periodFromDate(rebalanceDate.value)
-    // 1) 建/取季度记录（带 plan_id）
+    const period = rebalancePeriod(rebalanceDate.value, rebalanceType.value)
+    // 1) 建/取季度记录（带 plan_id）：季度标识 = 年份 + 类型（如「2026年末再平衡」），唯一
     let quarter = null
     try {
       quarter = await quartersApi.create({
         period,
         start_date: rebalanceDate.value,
-        budget: budget.value,
-        note: period + ' 再平衡',
+        budget: 0,
+        note: period,
         plan_id: planId.value,
       })
     } catch {
+      // period 已存在（如同一年的同名再平衡）→ 挂靠已有季度，保证标识唯一
       const all = await quartersApi.list({ plan_id: planId.value }).catch(() => [])
       quarter = (all || []).find((q) => q.period === period)
       if (!quarter) {
@@ -520,11 +527,6 @@ async function loadForPlan() {
         }
       })
     cashCurrent.value = (quarterData || []).reduce((s, q) => s + Number(q.cash_amount || 0), 0)
-    // 预算默认用方案每次投入金额；若当前周期已有季度，预算预填其预算
-    budget.value = plan && plan.amount != null ? Number(plan.amount) : 0
-    const period = periodFromDate(todayStr())
-    const cur = (quarterData || []).find((q) => q.period === period)
-    if (cur) budget.value = Number(cur.budget || 0)
     fetchPrices()
   } catch {
     // 接口错误在拦截器已展示
@@ -646,6 +648,9 @@ async function onPlanChange() {
   padding: 10px 14px;
   background: #f5f7fa;
   border-radius: 6px;
+}
+.cash-warn {
+  margin-top: 10px;
 }
 .submit-bar {
   display: flex;

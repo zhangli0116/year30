@@ -9,7 +9,10 @@ from app import models  # noqa: F401  确保模型注册到 Base.metadata
 from app.config import settings
 from app.database import Base, engine
 from app.logger import LOG_DIR, logger
+from app.routers import backtest as backtest_router
+from app.routers import benchmark as benchmark_router
 from app.routers import cash as cash_router
+from app.routers import datasource as datasource_router
 from app.routers import fund as fund_router
 from app.routers import holding as holding_router
 from app.routers import plan as plan_router
@@ -76,7 +79,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+app.include_router(backtest_router.router)
+app.include_router(benchmark_router.router)
 app.include_router(cash_router.router)
+app.include_router(datasource_router.router)
 app.include_router(fund_router.router)
 app.include_router(holding_router.router)
 app.include_router(price_router.router)

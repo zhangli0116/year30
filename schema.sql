@@ -134,7 +134,47 @@ CREATE TABLE fund_price (
 ) ENGINE = InnoDB COMMENT = '基金历史日线价格';
 
 -- --------------------------------------------------
--- 表 6：基金每日权益流水（按天累计持有份额 × 当日收盘价，按方案拆分）
+-- 表 5：对比基准指数（回测用）
+-- fund_id 非空 = 代理基准（用基金历史价代替指数，如 标普500→513500）
+-- --------------------------------------------------
+CREATE TABLE benchmark (
+    id         INT UNSIGNED  NOT NULL AUTO_INCREMENT COMMENT '主键ID',
+    symbol     VARCHAR(20)   NOT NULL COMMENT '行情symbol，如 sh000300 / sz399006 / sh513500',
+    name       VARCHAR(64)   NOT NULL COMMENT '基准名称，如 沪深300',
+    source     VARCHAR(16)   NOT NULL DEFAULT 'tencent' COMMENT '数据源',
+    fund_id    INT UNSIGNED  NULL COMMENT '代理基金ID（标普500→513500），NULL=直连指数日线',
+    active     TINYINT(1)    NOT NULL DEFAULT 1 COMMENT '是否启用',
+    created_at DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    PRIMARY KEY (id),
+    UNIQUE KEY uk_symbol (symbol),
+    CONSTRAINT fk_benchmark_fund FOREIGN KEY (fund_id) REFERENCES fund (id)
+        ON UPDATE CASCADE ON DELETE SET NULL
+) ENGINE = InnoDB COMMENT = '对比基准指数';
+
+-- --------------------------------------------------
+-- 表 6：基准指数历史日线（回测对比用）
+-- --------------------------------------------------
+CREATE TABLE benchmark_price (
+    id           INT UNSIGNED  NOT NULL AUTO_INCREMENT COMMENT '主键ID',
+    benchmark_id INT UNSIGNED  NOT NULL COMMENT '基准ID -> benchmark.id',
+    trade_date   DATE          NOT NULL COMMENT '交易日',
+    close_price  DECIMAL(10,4) NOT NULL COMMENT '收盘点位',
+    created_at   DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    PRIMARY KEY (id),
+    UNIQUE KEY uk_benchmark_date (benchmark_id, trade_date),
+    CONSTRAINT fk_bp_benchmark FOREIGN KEY (benchmark_id) REFERENCES benchmark (id)
+        ON UPDATE CASCADE ON DELETE CASCADE
+) ENGINE = InnoDB COMMENT = '基准指数历史日线';
+
+-- 基准种子（回测对比：沪深300/上证指数/创业板指直连指数；标普500 用 513500ETF 代理，人民币口径）
+INSERT INTO benchmark (symbol, name, source, fund_id) VALUES
+    ('sh000300',  '沪深300',          'tencent', NULL),
+    ('sh000001',  '上证指数',         'tencent', NULL),
+    ('sz399006',  '创业板指',         'tencent', NULL),
+    ('sh513500',  '标普500(513500代理)', 'tencent', (SELECT id FROM fund WHERE fund_code = '513500'));
+
+-- --------------------------------------------------
+-- 表 7：基金每日权益流水（按天累计持有份额 × 当日收盘价，按方案拆分）
 -- --------------------------------------------------
 CREATE TABLE fund_holding_daily (
     id            INT UNSIGNED   NOT NULL AUTO_INCREMENT COMMENT '主键ID',

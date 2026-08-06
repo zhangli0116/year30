@@ -184,6 +184,52 @@ class FundPrice(Base):
     fund: Mapped[Fund] = relationship()
 
 
+class Benchmark(Base):
+    """对比基准指数（回测对比用）。fund_id 非空=代理基准（如 标普500→513500）。"""
+
+    __tablename__ = "benchmark"
+
+    id: Mapped[int] = mapped_column(_UINT(), primary_key=True, autoincrement=True)
+    symbol: Mapped[str] = mapped_column(String(20), unique=True, nullable=False, comment="行情symbol，如 sh000300")
+    name: Mapped[str] = mapped_column(String(64), nullable=False, comment="基准名称")
+    source: Mapped[str] = mapped_column(String(16), nullable=False, default="tencent", comment="数据源")
+    fund_id: Mapped[Optional[int]] = mapped_column(
+        _UINT(),
+        ForeignKey("fund.id", onupdate="CASCADE", ondelete="SET NULL"),
+        nullable=True,
+        comment="代理基金ID（标普500→513500），NULL=直连指数日线",
+    )
+    active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, comment="是否启用")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, server_default=func.now(), comment="创建时间"
+    )
+
+    fund: Mapped[Optional[Fund]] = relationship()
+
+
+class BenchmarkPrice(Base):
+    """基准指数历史日线（回测对比用）。"""
+
+    __tablename__ = "benchmark_price"
+    __table_args__ = (UniqueConstraint("benchmark_id", "trade_date", name="uk_benchmark_date"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    benchmark_id: Mapped[int] = mapped_column(
+        _UINT(),
+        ForeignKey("benchmark.id", onupdate="CASCADE", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+        comment="基准ID",
+    )
+    trade_date: Mapped[date] = mapped_column(Date, nullable=False, comment="交易日")
+    close_price: Mapped[Decimal] = mapped_column(Numeric(10, 4), nullable=False, comment="收盘点位")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, server_default=func.now(), comment="创建时间"
+    )
+
+    benchmark: Mapped[Benchmark] = relationship()
+
+
 class Quarter(Base):
     """定投周期汇总表（某方案的每一期投入）。"""
 

@@ -35,14 +35,6 @@
                 @change="onDateChange"
               />
             </div>
-            <el-select v-model="source" placeholder="数据源" style="width: 160px">
-              <el-option
-                v-for="s in sources"
-                :key="s.name"
-                :label="s.label"
-                :value="s.name"
-              />
-            </el-select>
             <el-button type="primary" :loading="syncing" @click="doSync">
               同步缺失价格
             </el-button>
@@ -139,6 +131,10 @@
           <span class="entry-label">数据源</span>
           <b>{{ sourceLabel }}</b>
         </div>
+        <div v-if="sourceTip" class="entry-head-item">
+          <span class="entry-label">提示</span>
+          <b class="muted">{{ sourceTip }}</b>
+        </div>
       </div>
 
       <el-table :data="segList" size="small" stripe class="entry-table">
@@ -163,12 +159,13 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import * as echarts from 'echarts'
-import { fundsApi, pricesApi, quotesApi } from '../api'
+import { datasourceApi, fundsApi, pricesApi, quotesApi } from '../api'
 
 const fundOptions = ref([])
-const sources = ref([])
 const fundId = ref(null)
-const source = ref('tencent')
+// 当前数据源（设置页全局切换，同步跟随）
+const currentSourceName = ref('tencent')
+const currentSourceLabel = ref('腾讯行情')
 const startDate = ref('')
 const endDate = ref('')
 const syncing = ref(false)
@@ -267,8 +264,9 @@ function onFundChange() {
   loadQuote()
 }
 
-const sourceLabel = computed(
-  () => sources.value.find((s) => s.name === source.value)?.label || source.value
+const sourceLabel = computed(() => currentSourceLabel.value)
+const sourceTip = computed(() =>
+  currentSourceName.value === 'sina' ? '新浪日线仅支持最近约 4 年，更早历史需切回腾讯同步' : ''
 )
 
 // 先检查缺失时间段 → 弹窗确认 → 确认后才实际同步
@@ -284,7 +282,6 @@ async function doSync() {
       fund_id: fundId.value,
       start_date: startDate.value,
       end_date: endDate.value,
-      source: source.value,
     }
     // 1) 后端先确认缺失时间段
     const check = await pricesApi.check(payload)
@@ -313,7 +310,6 @@ async function confirmSync() {
       fund_id: fundId.value,
       start_date: startDate.value,
       end_date: endDate.value,
-      source: source.value,
     }
     const r = await pricesApi.sync(payload)
     syncResult.value =
@@ -420,13 +416,15 @@ function onResize() {
 
 onMounted(async () => {
   try {
-    const [fundData, sourceData] = await Promise.all([
+    const [fundData, ds] = await Promise.all([
       fundsApi.list({ page: 1, page_size: 100 }),
-      pricesApi.sources(),
+      datasourceApi.get(),
     ])
     const real = (fundData.items || []).filter((f) => f.fund_code !== '000000')
     fundOptions.value = real
-    sources.value = sourceData || []
+    currentSourceName.value = ds.current || 'tencent'
+    const p = (ds.providers || []).find((x) => x.name === currentSourceName.value)
+    currentSourceLabel.value = p ? p.label : currentSourceName.value
     if (real.length) fundId.value = real[0].id
     const [sd, ed] = defaultRange()
     startDate.value = sd

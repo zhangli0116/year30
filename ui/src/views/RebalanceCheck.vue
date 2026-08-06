@@ -54,7 +54,7 @@
             <span class="header-note">
               总市值 ¥{{ money(data?.total) }} · 现金占比 {{ cash ? cash.real.toFixed(2) + '%' : '-' }} · 需关注 {{ deviatingCount }} 项
             </span>
-            <el-button size="small" type="primary" @click="goCalculator">去计算器配比</el-button>
+            <el-button size="small" type="primary" @click="goAction">{{ actionLabel }}</el-button>
             <el-button size="small" :loading="loading" @click="load">刷新</el-button>
           </div>
         </div>
@@ -167,6 +167,9 @@ const cash = computed(() => data.value?.cash || null)
 const deviatingCount = computed(
   () => rows.value.filter((r) => r.status !== 'normal').length
 )
+// 存在超配 → 需卖出纠正（买入式无法处理），跳「临时再平衡」；否则补低配，跳「定投与再平衡计算器」
+const hasOver = computed(() => rows.value.some((r) => r.status === 'above'))
+const actionLabel = computed(() => (hasOver.value ? '去临时再平衡' : '去计算器配比'))
 
 let loadedKey = null // 最近一次生效的参数快照，用于预览去重
 
@@ -233,8 +236,8 @@ function resetParams() {
   Object.assign(cfg, DEFAULTS)
 }
 
-function goCalculator() {
-  router.push('/calculator')
+function goAction() {
+  router.push(hasOver.value ? '/rebalance' : '/calculator')
 }
 
 function tagType(row) {

@@ -126,3 +126,25 @@ export const rebalanceApi = {
   // PUT /api/v1/rebalance/params {r_band?, min_abs?, max_abs?, amount_floor?}
   saveParams: (data) => request.put('/rebalance/params', data),
 }
+
+export const backtestApi = {
+  // GET /api/v1/backtest → 回测结果
+  // params: {plan_id, start_date, end_date?, amount?, benchmarks?(逗号分隔), year_end_rebalance?}
+  run: (params) => request.get('/backtest', { params }),
+  // GET /api/v1/backtest/coverage → 数据覆盖检查
+  coverage: (params) => request.get('/backtest/coverage', { params }),
+}
+
+export const benchmarksApi = {
+  // GET /api/v1/benchmarks → 可选对比基准列表
+  list: () => request.get('/benchmarks'),
+  // POST /api/v1/benchmarks/sync?symbol=&start_date=&end_date=
+  sync: (params) => request.post('/benchmarks/sync', null, { params }),
+}
+
+export const datasourceApi = {
+  // GET /api/v1/datasource → {providers:[{name,label}], current}
+  get: () => request.get('/datasource'),
+  // PUT /api/v1/datasource {provider} → 切换当前数据源（持久化）
+  set: (data) => request.put('/datasource', data),
+}

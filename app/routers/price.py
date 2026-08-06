@@ -7,7 +7,7 @@ from app import crud, models, schemas
 from app.database import get_db
 from app.logger import logger
 from app.schemas import ApiResponse, error, success
-from app.services import price as price_service
+from app.services import datasource
 
 router = APIRouter(prefix="/api/v1/prices", tags=["prices"])
 
@@ -33,8 +33,8 @@ def _missing_segments(existing: set[date], start: date, end: date) -> list[tuple
 
 @router.get("/sources", response_model=ApiResponse[list[dict]])
 def list_sources() -> ApiResponse:
-    """列出可选的数据源（前端下拉选择）。"""
-    return success(price_service.list_sources())
+    """列出可选的数据源（兼容旧接口，实际用 GET /api/v1/datasource）。"""
+    return success(datasource.list_providers())
 
 
 @router.get("", response_model=ApiResponse[list[schemas.PriceBarOut]])
@@ -74,26 +74,33 @@ def check_missing(
 def sync_prices(
     payload: schemas.PriceSyncIn, db: Session = Depends(get_db)
 ) -> ApiResponse:
-    """按指定区间同步某基金的历史日线：未覆盖的日期调用所选数据源拉取并入库（幂等）。"""
+    """按指定区间同步某基金的历史日线：未覆盖的日期调用数据源拉取并入库（幂等）。
+
+    source 可传指定数据源（可选覆盖）；缺省用「当前数据源」（设置页切换）。
+    """
     fund = db.get(models.Fund, payload.fund_id)
     if fund is None:
         return error(40400, f"基金 {payload.fund_id} 不存在")
-    source = price_service.get_source(payload.source)
-    if source is None:
-        return error(40006, f"未知数据源：{payload.source}")
+    if payload.source:
+        provider = datasource.get_provider_by_name(payload.source)
+        if provider is None:
+            return error(40006, f"未知数据源：{payload.source}")
+    else:
+        provider = datasource.get_provider(db)
 
     try:
-        bars = source.fetch_daily(fund.fund_code, payload.start_date, payload.end_date)
+        symbol = datasource.fund_symbol(fund.exchange, fund.fund_code)
+        bars = provider.fetch_daily(symbol, payload.start_date, payload.end_date)
     except Exception as e:  # noqa: BLE001
-        logger.error(f"同步价格失败：基金{fund.fund_code} 数据源{payload.source}：{e}")
+        logger.error(f"同步价格失败：基金{fund.fund_code} 数据源{provider.name}：{e}")
         return error(50001, f"数据源拉取失败：{e}")
     inserted, existing = crud.price.upsert_bars(
-        db, payload.fund_id, bars, payload.source
+        db, payload.fund_id, bars, provider.name
     )
-    logger.info(f"同步价格：基金{fund.fund_code} {payload.start_date}~{payload.end_date}，拉取{len(bars)} 新增{inserted} 已有{existing}")
+    logger.info(f"同步价格：基金{fund.fund_code} {payload.start_date}~{payload.end_date}，数据源{provider.name} 拉取{len(bars)} 新增{inserted} 已有{existing}")
     return success(
         schemas.PriceSyncOut(
-            source=payload.source,
+            source=provider.name,
             fetched=len(bars),
             inserted=inserted,
             existing=existing,

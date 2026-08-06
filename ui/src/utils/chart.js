@@ -64,6 +64,47 @@ export function barSeries(name, data, color, opts = {}) {
   }
 }
 
+// 正负分色面积图（0 轴上下语义色，用于回撤水下曲线）
+// 把 data 拆成 ≥0 / <0 两段（另一段填 null），两系列同 name（legend 合并成一项），
+// 各自用纯色 areaStyle —— 面积锚定 0 轴，实现 0 线上下一色。
+export function signedArea(name, data, { posColor = colors.green, negColor = colors.red } = {}) {
+  const pos = []
+  const neg = []
+  data.forEach((v) => {
+    if (v == null) {
+      pos.push(null)
+      neg.push(null)
+      return
+    }
+    pos.push(v >= 0 ? v : null)
+    neg.push(v < 0 ? v : null)
+  })
+  const base = {
+    type: 'line',
+    smooth: true,
+    showSymbol: false,
+    emphasis: { focus: 'series' },
+  }
+  return [
+    {
+      ...base,
+      name,
+      data: pos,
+      lineStyle: { width: 1.5, color: posColor },
+      itemStyle: { color: posColor },
+      areaStyle: { color: posColor, opacity: 0.18 },
+    },
+    {
+      ...base,
+      name,
+      data: neg,
+      lineStyle: { width: 1.5, color: negColor },
+      itemStyle: { color: negColor },
+      areaStyle: { color: negColor, opacity: 0.3 },
+    },
+  ]
+}
+
 // 均值虚线（markLine）
 export function averageMarkLine() {
   return {

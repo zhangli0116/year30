@@ -223,7 +223,7 @@ class PriceSyncIn(BaseModel):
     fund_id: int = Field(..., description="基金ID")
     start_date: date = Field(..., description="起始日期")
     end_date: date = Field(..., description="结束日期")
-    source: str = Field("tencent", description="数据源标识，如 tencent")
+    source: Optional[str] = Field(None, description="数据源标识（可选覆盖），缺省用「当前数据源」")
 
 
 class PriceSyncOut(BaseModel):
@@ -511,3 +511,148 @@ class RebalanceOut(BaseModel):
     total: float
     funds: list[RebalanceFundOut]
     cash: RebalanceCashOut
+
+
+# =========================================================
+# 对比基准（回测用）
+# =========================================================
+
+
+class BenchmarkOut(BaseModel):
+    id: int
+    symbol: str  # 行情 symbol，如 sh000300 / sz399006 / sh513500
+    name: str
+    source: str = "tencent"
+    fund_id: Optional[int] = None  # 代理基金ID，NULL=直连指数
+    fund_code: Optional[str] = None
+    fund_name: Optional[str] = None
+    active: bool = True
+
+
+class BenchmarkSyncOut(BaseModel):
+    symbol: str
+    fetched: int = 0
+    inserted: int = 0
+    existing: int = 0
+    range_start: date
+    range_end: date
+
+
+# =========================================================
+# 方案回测
+# =========================================================
+
+
+class BacktestCoverageItem(BaseModel):
+    """回测数据覆盖检查单条：基金或基准。"""
+
+    kind: Literal["fund", "benchmark"]
+    id: int
+    code: str
+    name: str
+    first_date: Optional[date] = None  # 全表最早可用日期
+    last_date: Optional[date] = None  # 全表最晚可用日期
+    missing_days: int = 0  # 区间内真实缺失的交易日数（剔除节假日/今天未收盘）
+    segments: list[PriceSegment] = Field(default_factory=list)
+    covers_window: bool = False  # 数据起点≤start 且终点≥全局最后交易日 且 无真实缺失
+    actionable: bool = False  # True=存在可补的真实缺口（需同步/补历史）；False=仅数据起点晚（多为上市晚）
+
+
+class BacktestCoverageOut(BaseModel):
+    items: list[BacktestCoverageItem] = Field(default_factory=list)
+    start_date: date
+    end_date: date
+    ready: bool = False  # 全部 covers_window
+
+
+class BacktestTradeOut(BaseModel):
+    date: date
+    fund_code: str
+    fund_name: str
+    side: Literal["buy", "sell"]
+    hands: int
+    price: Decimal
+    principal: Decimal
+    fee: Decimal
+    total_amount: Decimal
+    reason: Literal["period", "annual"]  # period=每期定投 / annual=年末再平衡
+
+
+class BacktestPointOut(BaseModel):
+    date: date
+    asset: Decimal  # 总资产 = 权益 + 现金
+    equity: Decimal  # 权益市值
+    cash: Decimal  # 现金
+    invested: Decimal  # 累计投入
+    nav: float  # TWR 累计净值
+    drawdown: float  # 相对历史峰值回撤（≤0）
+
+
+class BacktestMetricsOut(BaseModel):
+    xirr: Optional[float] = None  # 资金加权年化（主指标）
+    twr: Optional[float] = None  # 时间加权期间收益
+    twr_annualized: Optional[float] = None  # TWR 年化
+    span_days: int = 0
+    start_date: Optional[date] = None  # 实际生效起始日（可能晚于请求值）
+    end_date: Optional[date] = None  # 实际最后交易日
+    max_drawdown: float = 0.0  # 最大回撤（≤0）
+    max_drawdown_start: Optional[date] = None  # 最大回撤对应峰值日
+    max_drawdown_end: Optional[date] = None  # 最大回撤谷底日
+    current_drawdown: float = 0.0
+    invested: Decimal = Decimal("0")
+    current_value: Decimal = Decimal("0")
+    gain: Decimal = Decimal("0")
+    gain_pct: Optional[float] = None
+    deposit_count: int = 0
+
+
+class BacktestBenchmarkNav(BaseModel):
+    date: date
+    nav: Optional[float] = None  # 归一化净值（起始日=1），基准无数据前为 None
+
+
+class BacktestBenchmarkOut(BaseModel):
+    symbol: str
+    name: str
+    cagr: Optional[float] = None
+    total_return: float = 0.0
+    nav_series: list[BacktestBenchmarkNav] = Field(default_factory=list)
+
+
+class BacktestParamsOut(BaseModel):
+    start_date: date
+    end_date: date
+    amount: Decimal
+    interval_days: int
+    rebalance_strategy: str
+    year_end_rebalance: bool = True
+
+
+class BacktestOut(BaseModel):
+    plan_id: int
+    plan_name: str
+    params: BacktestParamsOut
+    metrics: BacktestMetricsOut
+    points: list[BacktestPointOut] = Field(default_factory=list)
+    trades: list[BacktestTradeOut] = Field(default_factory=list)
+    benchmarks: list[BacktestBenchmarkOut] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+
+
+# =========================================================
+# 数据源（当前数据源切换）
+# =========================================================
+
+
+class DataSourceProvider(BaseModel):
+    name: str
+    label: str
+
+
+class DataSourceOut(BaseModel):
+    providers: list[DataSourceProvider] = Field(default_factory=list)
+    current: str = "tencent"
+
+
+class DataSourceUpdate(BaseModel):
+    provider: str = Field(..., description="数据源名称，如 tencent / sina")

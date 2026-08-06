@@ -36,7 +36,7 @@ npm run dev        # http://localhost:5173
 
 前端通过 Vite 代理把 `/api` 转发到后端（同样读根目录 .env，改 `HTTP_PORT` 两边自动同步）。
 
-页面：汇总（总权益/总资产/累积投入走势、持仓汇总、XIRR 年化收益、再平衡状态）、基金管理、购买记录（按季度折叠）、季度计算器（买入式再平衡）、卖出式再平衡、再平衡体检（偏离判定与参数）、基金价格（K线+成交量+实时五档盘口+同步）、每日权益流水、每日现金流量。各线图统一走 `ui/src/utils/chart.js` 的共享样式，保证风格一致。
+页面：汇总（总权益/总资产/累积投入走势、持仓汇总、XIRR 年化收益、再平衡状态）、基金管理、购买记录（按季度折叠）、定投与再平衡计算器（定投录入 + 买入式再平衡）、临时再平衡（年末/突发，按当前持仓超配卖出/低配买入，操作归属「年份+类型」命名的季度）、再平衡体检（偏离判定与参数）、基金价格（K线+成交量+实时五档盘口+同步）、每日权益流水、每日现金流量、方案回测（从历史时点模拟「每期定投 + 买入式平衡 + 年末卖出式再平衡」，算 XIRR 年化/TWR/最大回撤并对比沪深300/上证/创业板/标普500 基准）、系统设置（切换当前数据源：腾讯/新浪，所有取数操作跟随）。各线图统一走 `ui/src/utils/chart.js` 的共享样式，保证风格一致。
 
 构建产物：`cd ui && npm run build`，输出到 `ui/dist/`。
 
@@ -52,9 +52,10 @@ app/
 ├── config.py          # 读取 .env，生成数据库连接串
 ├── database.py        # engine / SessionLocal / Base / get_db
 ├── logger.py          # loguru 日志配置
-├── models.py          # Fund / Quarter / PurchaseRecord / FundPrice / FundHoldingDaily / FundCashDaily
+├── models.py          # Fund / Quarter / PurchaseRecord / FundPrice / FundHoldingDaily / FundCashDaily / Benchmark / BenchmarkPrice
 ├── schemas.py         # Pydantic 模型 + 统一响应包装
 ├── crud/              # 数据访问层
+│   ├── benchmark.py   #   对比基准 CRUD + 幂等写入基准日线
 │   ├── cash.py        #   每日现金流 生成/查询/缺失检查
 │   ├── fund.py        #   基金 CRUD + 汇总（含买卖相减）
 │   ├── holding.py     #   每日权益流水 生成/查询/缺失检查
@@ -62,26 +63,33 @@ app/
 │   ├── purchase.py    #   购买记录 CRUD + 手续费计算（买卖费率）
 │   └── quarter.py     #   季度 CRUD + 重算（equity/total_fee/cash）
 ├── services/
-│   ├── price.py       # 价格数据源抽象层（PriceSource 基类 + TencentPriceSource + 注册表）
-│   └── quote.py       # 实时行情：昨收/涨跌额/涨跌幅 + 买卖五档价与挂单量（腾讯公开接口转发）
+│   ├── backtest.py    # 回测引擎（每期买入式 + 年末卖出式再平衡，XIRR/TWR/回撤/基准对比）
+│   ├── benchmark.py   # 基准默认种子 + 按 symbol 拉指数日线（直连/代理）+ 幂等同步
+│   ├── datasource.py  # 数据源注册表 + 「当前数据源」管理（app_setting 持久化）+ fund→symbol 解析
+│   ├── price.py       # 数据源抽象（DataProvider 基类 + TencentProvider：日线窗口分页 + 五档行情）
+│   ├── sina.py        # 新浪数据源（新浪五档行情 + 日线，免费日线限最近约 4 年）
+│   └── xirr.py        # XIRR/TWR 计算（实时价按当前数据源取）
 └── routers/           # API 路由层
+    ├── backtest.py    #   /api/v1/backtest（回测 + 数据覆盖检查）
+    ├── benchmark.py   #   /api/v1/benchmarks（列表 + 同步）
     ├── cash.py        #   /api/v1/cash
+    ├── datasource.py  #   /api/v1/datasource（当前数据源 查询/切换）
     ├── fund.py        #   /api/v1/funds
     ├── holding.py     #   /api/v1/holdings
     ├── price.py       #   /api/v1/prices
     ├── purchase.py    #   /api/v1/purchases
     ├── quarter.py     #   /api/v1/quarters
-    └── quote.py       #   /api/v1/quotes
+    └── quote.py       #   /api/v1/quotes（按当前数据源取实时行情）
 scripts/
 └── init_db.py         # 手动补建缺失表：python scripts/init_db.py
-schema.sql             # 数据库表结构（fund/quarter/purchase_record/fund_price/fund_holding_daily/fund_cash_daily）
+schema.sql             # 数据库表结构（fund/quarter/purchase_record/fund_price/fund_holding_daily/fund_cash_daily/benchmark/benchmark_price）
 ui/
 └── src/
     ├── api/index.js
-    ├── components/    # QuarterChart / TotalEquityChart
+    ├── components/    # QuarterChart / TotalEquityChart / PlanSwitcher
     ├── utils/
-    │   └── chart.js   # 共享 ECharts 样式工具（调色板/折线/柱/渐变/均值线/格式化）
-    ├── views/         # Dashboard / Funds / Purchases / Calculator / Rebalance / Prices / Holdings / Cash
+    │   └── chart.js   # 共享 ECharts 样式工具（调色板/折线/柱/渐变/正负分色/均值线/格式化）
+    ├── views/         # Dashboard / Funds / Purchases / Calculator / Rebalance / RebalanceCheck / Prices / Holdings / Cash / Backtest
     └── router/index.js
 ```
 
@@ -94,6 +102,8 @@ ui/
 - **fund_price**：历史日线 OHLC（数据源可切换，默认腾讯前复权）
 - **fund_holding_daily**：每日权益流水 = 累计持有份额 × 当日收盘价
 - **fund_cash_daily**：每日现金流量 = 按日历日累计（预算入账 + 卖出回笼 − 买入支出 − 手续费）
+- **benchmark**：对比基准指数（回测用），`fund_id` 非空 = 代理基准（标普500→513500，从 fund_price 拷贝收盘价，人民币口径）
+- **benchmark_price**：基准历史日线（回测对比用）
 
 ## 再平衡判定
 
@@ -132,18 +142,24 @@ ui/
 | POST | `/quarters/{id}/recalc` | 按记录重算 equity/total_fee/cash |
 | DELETE | `/quarters/{id}` | 删除季度（记录置空 quarter_id） |
 
+### 数据源 datasource（当前数据源切换）
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| GET | `/datasource` | 可选数据源列表 + 当前使用哪个 |
+| PUT | `/datasource` | 切换「当前数据源」（body `{provider}`，持久化到 app_setting），实时行情/历史价同步/基准同步/每日自动同步统一跟随 |
+
 ### 实时行情 quotes
 | 方法 | 路径 | 说明 |
 |---|---|---|
-| GET | `/quotes` | 实时行情（`codes=513500,513100`），返回 `{quotes: [...]}`，每项含：最新价/昨收/涨跌额/涨跌幅、买卖 1..5 档价与挂单量（手）、时间 |
+| GET | `/quotes` | 实时行情（`codes=513500,513100`），按「当前数据源」取数，返回 `{quotes: [...], source}`，每项含：最新价/昨收/涨跌额/涨跌幅、买卖 1..5 档价与挂单量（手）、时间 |
 
 ### 历史价格 prices
 | 方法 | 路径 | 说明 |
 |---|---|---|
-| GET | `/prices/sources` | 可选数据源列表 |
+| GET | `/prices/sources` | 可选数据源列表（兼容旧接口，同 `/datasource`） |
 | GET | `/prices` | 查询日线（fund_id + start/end） |
 | POST | `/prices/check` | 检查缺失时间段（只统计工作日缺口） |
-| POST | `/prices/sync` | 同步缺失日期（幂等，source 指定数据源） |
+| POST | `/prices/sync` | 同步缺失日期（幂等，`source` 可选覆盖，缺省用当前数据源） |
 
 ### 每日权益流水 holdings
 | 方法 | 路径 | 说明 |
@@ -160,14 +176,31 @@ ui/
 | POST | `/cash/check` | 检查缺失日历日 |
 | POST | `/cash/generate` | 生成/更新每日现金流量 |
 
+### 方案回测 backtest
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| GET | `/backtest` | 回测（plan_id + start_date + end_date?/amount?/benchmarks?/year_end_rebalance?），返回 XIRR 年化/TWR/最大回撤/每日曲线/交易明细/基准对比 |
+| GET | `/backtest/coverage` | 数据覆盖检查（各基金 + 所选基准在区间的缺失情况，`ready` 是否全部覆盖） |
+
+### 对比基准 benchmarks
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| GET | `/benchmarks` | 基准列表（回测页多选；首次调用自动灌默认 4 基准） |
+| POST | `/benchmarks/sync` | 按区间增量同步基准日线（幂等；代理基准从 fund_price 拷贝，直连基准走腾讯指数日线） |
+
 ## 返回格式
 
 ```json
 { "code": 0, "message": "ok", "data": { ... } }
 ```
 
-业务错误码：`40001` 基金代码重复，`40002` 删除被关联记录拦截，`40003` 关联基金不存在，`40005` 周期已存在，`40006` 未知数据源，`40400` 基金不存在，`40401` 购买记录不存在，`40402` 季度不存在，`50001` 数据源拉取失败。
+业务错误码：`40001` 基金代码重复，`40002` 删除被关联记录拦截，`40003` 关联基金不存在，`40005` 周期已存在，`40006` 未知数据源，`40400` 基金不存在，`40401` 购买记录不存在，`40402` 季度不存在，`40403` 方案不存在，`40404` 基准不存在，`50001` 数据源拉取失败。
 
 ## 数据源扩展
 
-新增价格数据源：继承 `app/services/price.py` 的 `PriceSource`，实现 `fetch_daily(code, start, end)`，注册进 `SOURCES` 字典，前端「数据源」下拉自动出现。
+所有外部取数统一走「当前数据源」（`app/services/datasource.py`，设置页切换，持久化到 `app_setting.datasource.provider`）。新增数据源三步：
+1. 继承 `app/services/price.py` 的 `DataProvider`，实现 `fetch_daily(symbol, start, end)`（历史日线，symbol 为完整行情代码如 `sh513500`/`sz399006`）与 `fetch_quotes(symbols)`（实时五档行情）。
+2. 在 `app/services/datasource.py::_registry()` 注册实例。
+3. 前端「系统设置」页自动出现选项，切换后所有取数操作（行情/历史价/基准同步/每日自动同步/XIRR·再平衡实时价）统一跟随。
+
+已实现：`tencent`（腾讯：日线前复权窗口分页 + 五档行情）、`sina`（新浪：五档行情 + 日线，免费日线限最近约 4 年，更早历史需切回腾讯补）。

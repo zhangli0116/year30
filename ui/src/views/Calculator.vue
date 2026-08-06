@@ -11,7 +11,7 @@
     <el-card shadow="never">
       <template #header>
         <div class="card-header">
-          <span>定投计算器</span>
+          <span>定投与再平衡计算器</span>
           <div class="header-right">
             <span v-if="quoteTime" class="header-note">行情更新：{{ quoteTime }}</span>
             <el-button type="primary" size="small" :loading="loadingQuote" @click="fetchPrices">
