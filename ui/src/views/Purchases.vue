@@ -30,7 +30,7 @@
     </template>
 
     <div v-loading="loading">
-      <!-- 按季度分组 -->
+      <!-- 按周期分组 -->
       <div v-for="q in quarterViews" :key="q.id" class="quarter-card">
         <div class="quarter-header">
           <div class="q-left" @click="toggle(q.id)">
@@ -39,7 +39,8 @@
               <ArrowRight v-else />
             </el-icon>
             <span class="q-period">{{ q.period }}</span>
-            <span v-if="q.start_date" class="q-meta">{{ q.start_date }} 起</span>
+            <span v-if="q.start_date && q.end_date" class="q-meta">{{ q.start_date }} ~ {{ q.end_date }}</span>
+            <span v-else-if="q.start_date" class="q-meta">{{ q.start_date }} 起</span>
           </div>
           <div class="q-stats">
             <span class="q-stat">
@@ -84,7 +85,7 @@
                   {{ (row.hands * row.shares_per_hand).toLocaleString('zh-CN') }}
                 </template>
               </el-table-column>
-              <el-table-column label="总金额" width="120" align="right">
+              <el-table-column label="金额" width="120" align="right">
                 <template #default="{ row }">¥ {{ Number(row.total_amount).toFixed(2) }}</template>
               </el-table-column>
               <el-table-column label="手续费" width="80" align="right">
@@ -107,7 +108,7 @@
         </el-collapse-transition>
       </div>
 
-      <!-- 未归类记录（不在任何季度内） -->
+      <!-- 未归类记录（不在任何周期内） -->
       <div v-if="orphanRecords.length" class="quarter-card orphan-card">
         <div class="quarter-header">
           <div class="q-left" @click="orphanExpanded = !orphanExpanded">
@@ -116,7 +117,7 @@
               <ArrowRight v-else />
             </el-icon>
             <span class="q-period">未归类记录</span>
-            <span class="q-meta">（未关联季度）</span>
+            <span class="q-meta">（未关联周期）</span>
           </div>
           <div class="q-stats"><span class="q-stat">{{ orphanRecords.length }} 条记录</span></div>
         </div>
@@ -142,7 +143,7 @@
                   {{ (row.hands * row.shares_per_hand).toLocaleString('zh-CN') }}
                 </template>
               </el-table-column>
-              <el-table-column label="总金额" width="120" align="right">
+              <el-table-column label="金额" width="120" align="right">
                 <template #default="{ row }">¥ {{ Number(row.total_amount).toFixed(2) }}</template>
               </el-table-column>
               <el-table-column label="手续费" width="80" align="right">
@@ -179,11 +180,11 @@
             <el-radio-button value="sell">卖出</el-radio-button>
           </el-radio-group>
         </el-form-item>
-        <el-form-item label="季度" prop="quarter_id">
+        <el-form-item label="周期" prop="quarter_id">
           <div class="quarter-field">
             <el-select
               v-model="form.quarter_id"
-              placeholder="选择季度（不选则归入未归类）"
+              placeholder="选择周期（不选则归入未归类）"
               clearable
               style="flex: 1"
             >
@@ -194,7 +195,7 @@
                 :value="q.id"
               />
             </el-select>
-            <el-button size="small" @click="openNewQuarter">新建季度</el-button>
+            <el-button size="small" @click="openNewQuarter">新建周期</el-button>
           </div>
         </el-form-item>
         <el-form-item label="基金" prop="fund_id">
@@ -310,14 +311,14 @@
             费率(%)，手续费 = max(5, {{ isSell ? '成交额' : '本金' }} × 费率)，不足 5 元按 5 元；卖出默认 0.07
           </div>
         </el-form-item>
-        <el-form-item :label="isSell ? '成交金额' : '总金额'">
+        <el-form-item :label="isSell ? '成交金额' : '本金'">
           <el-input-number
             v-model="form.total_amount"
             :min="0.01"
             :precision="2"
             :controls="false"
             style="width: 100%"
-            :placeholder="isSell ? '留空自动计算 = 成交额（本金）' : '留空自动计算 = 本金 + 手续费'"
+            :placeholder="isSell ? '留空自动计算 = 成交额（不含手续费）' : '留空自动计算 = 本金（不含手续费）'"
           />
         </el-form-item>
         <el-form-item label="备注">
@@ -330,10 +331,10 @@
       </template>
     </el-dialog>
 
-    <!-- 新建季度弹窗（嵌套在记录弹窗内） -->
+    <!-- 新建周期弹窗（嵌套在记录弹窗内） -->
     <el-dialog
       v-model="newQuarterVisible"
-      title="新建季度"
+      title="新建周期"
       width="420px"
       :close-on-click-modal="false"
     >
@@ -358,7 +359,11 @@
         </el-form-item>
         <el-form-item label="周期标识">
           <span>{{ newQuarterForm.period }}</span>
-          <span class="muted">（自动按方案周期生成）</span>
+          <span class="muted">（按方案间隔自动生成）</span>
+        </el-form-item>
+        <el-form-item label="周期区间">
+          <span>{{ newQuarterForm.start_date || '—' }} ~ {{ newQuarterForm.end_date || '—' }}</span>
+          <span class="muted">（结束 = 起始 + 方案间隔 {{ planIntervalDays() }} 天）</span>
         </el-form-item>
       </el-form>
       <template #footer>
@@ -378,15 +383,32 @@ import { intervalLabel, periodFromDate } from '../utils/plan'
 
 // 当前选中的定投方案：季度与购买记录都按方案过滤
 const planId = ref(null)
-const currentPlan = ref(null) // 当前方案（取 interval/amount，用于新建季度）
+const currentPlan = ref(null) // 当前方案（取 interval/amount，用于新建周期）
 
-// 新建季度弹窗
+// 新建周期弹窗
 const newQuarterVisible = ref(false)
-const newQuarterForm = reactive({ start_date: '', budget: 0, period: '' })
+const newQuarterForm = reactive({ start_date: '', budget: 0, period: '', end_date: '' })
+
+// 方案间隔天数（周期区间用；缺失回退 91 天）
+function planIntervalDays() {
+  return currentPlan.value?.interval_days || 91
+}
+
+// 日期 + 天数 → 新日期
+function addDays(dateStr, days) {
+  if (!dateStr) return ''
+  const d = new Date(dateStr)
+  d.setDate(d.getDate() + days)
+  const m = String(d.getMonth() + 1).padStart(2, '0')
+  const day = String(d.getDate()).padStart(2, '0')
+  return `${d.getFullYear()}-${m}-${day}`
+}
+
 watch(
   () => newQuarterForm.start_date,
   (v) => {
     newQuarterForm.period = periodFromDate(v, intervalLabel(currentPlan.value?.interval_days))
+    newQuarterForm.end_date = addDays(v, planIntervalDays()) // 结束 = 起始 + 方案间隔
   }
 )
 
@@ -444,10 +466,14 @@ const computedFee = computed(() => {
   return Math.max(5, +(principal * (form.fee_rate || (isSell.value ? 0.07 : 0.03)) / 100).toFixed(2))
 })
 
-// 编辑时由存量手续费反推费率展示；等于最低 5 元或默认费率时回默认
+// 编辑时回显费率：数据库只存手续费金额、不存费率，无法可靠反推。
+// 手续费被最低 5 元钳制（不足 5 按 5）时，fee/principal 会虚高（如 5/几百 = 1%+），
+// 一律回类型默认费率（买入 0.03 / 卖出 0.07）；
+// 仅当手续费确实超过最低 5 元（费率真实生效）时才用 fee/principal 反推展示。
 function effectiveRate(fee, principal, sell = false) {
   const dflt = sell ? 0.07 : 0.03
   if (principal <= 0) return dflt
+  if (fee <= 5) return dflt
   const r = (fee / principal) * 100
   return r <= dflt ? dflt : +r.toFixed(4)
 }
@@ -539,7 +565,7 @@ function todayStr() {
   return `${d.getFullYear()}-${m}-${day}`
 }
 
-// 新建季度：按方案周期自动生成 period，创建后回填到当前记录弹窗
+// 新建周期：按方案间隔自动生成 period，创建后回填到当前记录弹窗
 function openNewQuarter() {
   newQuarterForm.start_date = todayStr()
   newQuarterForm.budget =
@@ -550,6 +576,7 @@ function openNewQuarter() {
     newQuarterForm.start_date,
     intervalLabel(currentPlan.value?.interval_days)
   )
+  newQuarterForm.end_date = addDays(newQuarterForm.start_date, planIntervalDays())
   newQuarterVisible.value = true
 }
 
@@ -568,9 +595,10 @@ async function createQuarter() {
       plan_id: planId.value,
       period: newQuarterForm.period,
       start_date: newQuarterForm.start_date,
+      end_date: newQuarterForm.end_date || null,
       budget: newQuarterForm.budget,
     })
-    ElMessage.success(`季度 ${q.period} 已创建`)
+    ElMessage.success(`周期 ${q.period} 已创建`)
     newQuarterVisible.value = false
     form.quarter_id = q.id
     await load()
@@ -668,6 +696,33 @@ function money(v) {
 
 async function handleSubmit() {
   await formRef.value.validate()
+  // 周期与交易日匹配校验：选了周期时，交易日期应在周期 [start_date, end_date] 内。
+  // 不匹配则提示用户去修改周期或交易日期，系统不自行决定。
+  if (form.quarter_id && form.purchase_date) {
+    const q = quarterOptions.value.find((x) => x.id === form.quarter_id)
+    if (q) {
+      const pd = new Date(form.purchase_date)
+      const tooEarly = q.start_date && pd < new Date(q.start_date)
+      const tooLate = q.end_date && pd > new Date(q.end_date)
+      if (tooEarly || tooLate) {
+        const range = `${q.start_date || '—'} ~ ${q.end_date || '—'}`
+        try {
+          await ElMessageBox.confirm(
+            `交易日期 ${form.purchase_date} 不在周期 ${q.period}（${range}）内。\n请去修改周期或交易日期，使其匹配。`,
+            '周期与交易日期不匹配',
+            {
+              confirmButtonText: '返回修改',
+              cancelButtonText: '仍要保存',
+              type: 'warning',
+            }
+          )
+          return // 用户选择返回修改，不保存
+        } catch {
+          // 用户选择仍要保存，继续提交
+        }
+      }
+    }
+  }
   const payload = {
     type: form.type,
     quarter_id: form.quarter_id,
@@ -680,7 +735,7 @@ async function handleSubmit() {
     fee: computedFee.value,
     note: form.note || null,
   }
-  // 总金额留空时不传，由后端按 本金 + 手续费 自动计算
+  // 金额留空时不传，由后端按 本金/成交额（不含手续费）自动计算
   if (form.total_amount != null) payload.total_amount = form.total_amount
 
   saving.value = true

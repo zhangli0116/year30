@@ -1,10 +1,12 @@
 """定投方案回测引擎。
 
 模拟「每期定投 + 再平衡策略」从历史起始日到今天：
-    每期入账 amount → 买入式平衡（低配补买、超配不卖，仅当现金充足）
-    每年最后一个交易日 → 卖出式完全再平衡（超配卖出回现金 → 低配买入到目标）
+    每期入账 amount → buy_rebalance 开：买入式平衡（低配补买、超配不卖）；
+                       关：纯按目标比例定投（不修正偏离，让漂移可见）
+    每年最后一个交易日 → sell_rebalance 开：超配卖出回现金；buy_rebalance 开：低配买入到目标
+    两个开关可独立组合（都开/都关/单开）
 指标：XIRR 年化（主，资金加权）、TWR（策略期间收益）、最大回撤/当前回撤（TWR 净值口径）、
-      基准对比（归一化曲线 + CAGR）。
+      基准对比（归一化曲线 + CAGR）、各标的持仓占比时间序列（含现金）。
 撮合规则与真实系统完全一致：整手=100份、买入收盘价、非交易日顺延下一交易日、
 手续费 max(5, 本金×费率)（买0.03%/卖0.07%，复用 crud/purchase 常量）。
 """
@@ -32,7 +34,8 @@ def run_backtest(
     end_date: date | None = None,
     amount: Decimal | None = None,
     benchmark_symbols: list[str] | None = None,
-    year_end_rebalance: bool = True,
+    buy_rebalance: bool = True,
+    sell_rebalance: bool = True,
     unlisted_mode: str = "park",
 ) -> dict:
     """执行回测，返回结构化的结果 dict（供 router 组装 schema）。
@@ -98,7 +101,7 @@ def run_backtest(
         all_dates.update(pd.keys())
     trade_days = sorted(all_dates)
     if not trade_days:
-        return _empty(plan, warnings, amount, start_date, today, unlisted_mode)
+        return _empty(plan, warnings, amount, start_date, today, buy_rebalance, sell_rebalance, unlisted_mode)
 
     eff_start = max(start_date, trade_days[0])
     last_day = trade_days[-1]
@@ -142,6 +145,7 @@ def run_backtest(
     deposits: list[tuple[date, Decimal]] = []
     trades: list[dict] = []
     points: list[dict] = []
+    ever_available: set[int] = set()  # 出现过的有价标的（判"新上市"用）
 
     def prices_at(d: date) -> dict[int, Decimal]:
         return {fid: price_fwd(fid, d) for fid in price_dates}
@@ -202,7 +206,67 @@ def run_backtest(
                     "price": price,
                     "principal": principal,
                     "fee": fee,
-                    "total_amount": principal + fee,
+                    "total_amount": principal,
+                    "reason": reason,
+                }
+            )
+
+    def dca_buy(d: date, p: dict[int, Decimal], budget: Decimal, reason: str) -> None:
+        """纯定投（买入式平衡关闭）：只用本期入账金额，按各标的有效目标占比买入。
+
+        有效占比经 target_pct_for 换算，尊重 park/redistribute：
+        park 下未上市标的的份额留在现金（不重分配）；redistribute 下可用标的按比例放大。
+        新上市标的一次性用停泊现金补到目标（"上市后再补买"，park 语义），之后按每期入账定投。
+        """
+        nonlocal cash
+        if budget <= 0 or cash <= 0:
+            return
+        total_now = cash + sum(
+            shares.get(f["fund_id"], 0) * p.get(f["fund_id"])
+            for f in funds
+            if p.get(f["fund_id"]) is not None
+        )
+        for f in funds:
+            fid = f["fund_id"]
+            price = p.get(fid)
+            if price is None:
+                continue  # 未上市/无价 → 该标的份额留在现金（park）
+            eff = target_pct_for(f, d)
+            if eff <= 0:
+                continue
+            newly = fid not in ever_available
+            ever_available.add(fid)
+            lot = price * _HANDS
+            if newly and unlisted_mode == "park":
+                # 新上市（仅 park 有停泊现金）：一次补到目标占比
+                gap = total_now * eff / Decimal("100") - shares.get(fid, 0) * price
+            else:
+                # 常规定投 / redistribute 新上市：本期入账按目标比例
+                gap = budget * eff / Decimal("100")
+            hands = int(gap // lot)
+            if hands <= 0:
+                continue
+            principal = hands * lot
+            fee = _calc_fee(principal, None, None, is_sell=False)
+            if principal + fee > cash:
+                hands = int((cash - MIN_FEE) // lot)
+                if hands <= 0:
+                    continue
+                principal = hands * lot
+                fee = _calc_fee(principal, None, None, is_sell=False)
+            cash -= principal + fee
+            shares[fid] = shares.get(fid, 0) + hands * _HANDS
+            trades.append(
+                {
+                    "date": d,
+                    "fund_code": f["fund_code"],
+                    "fund_name": f["fund_name"],
+                    "side": "buy",
+                    "hands": hands,
+                    "price": price,
+                    "principal": principal,
+                    "fee": fee,
+                    "total_amount": principal,
                     "reason": reason,
                 }
             )
@@ -223,74 +287,76 @@ def run_backtest(
     def annual_rebalance(d: date, p: dict[int, Decimal]) -> None:
         nonlocal cash
         total = cash + sum(shares.get(fid, 0) * p[fid] for fid in p if p[fid] is not None)
-        # ① 先卖超配（整手，回现金扣卖费）；只调「体检判定为超配」的基金
-        for f in funds:
-            fid = f["fund_id"]
-            price = p.get(fid)
-            if price is None:
-                warnings.append(f"{f['fund_code']} 年末再平衡当日无价，跳过该基金")
-                continue
-            mv = shares.get(fid, 0) * price
-            need, status = _should_rebalance(f, d, total, mv, price)
-            if not need or status != "above":
-                continue
-            target_mv = total * target_pct_for(f, d) / Decimal("100")
-            lot = price * _HANDS
-            hands = int((mv - target_mv) // lot)
-            if hands <= 0:
-                continue
-            principal = hands * lot
-            fee = _calc_fee(principal, None, None, is_sell=True)
-            cash += principal - fee
-            shares[fid] = shares.get(fid, 0) - hands * _HANDS
-            trades.append(
-                {
-                    "date": d,
-                    "fund_code": f["fund_code"],
-                    "fund_name": f["fund_name"],
-                    "side": "sell",
-                    "hands": hands,
-                    "price": price,
-                    "principal": principal,
-                    "fee": fee,
-                    "total_amount": principal,
-                    "reason": "annual",
-                }
-            )
-        # ② 再买低配（卖出现金回流，填到目标）；只调「体检判定为低配」的基金
-        for f in funds:
-            fid = f["fund_id"]
-            price = p.get(fid)
-            if price is None or cash <= 0:
-                continue
-            mv = shares.get(fid, 0) * price
-            need, status = _should_rebalance(f, d, total, mv, price)
-            if not need or status != "below":
-                continue
-            target_mv = total * target_pct_for(f, d) / Decimal("100")
-            lot = price * _HANDS
-            gap = target_mv - mv
-            hands = min(int(gap // lot), int((cash - MIN_FEE) // lot))
-            if hands <= 0:
-                continue
-            principal = hands * lot
-            fee = _calc_fee(principal, None, None, is_sell=False)
-            cash -= principal + fee
-            shares[fid] = shares.get(fid, 0) + hands * _HANDS
-            trades.append(
-                {
-                    "date": d,
-                    "fund_code": f["fund_code"],
-                    "fund_name": f["fund_name"],
-                    "side": "buy",
-                    "hands": hands,
-                    "price": price,
-                    "principal": principal,
-                    "fee": fee,
-                    "total_amount": principal + fee,
-                    "reason": "annual",
-                }
-            )
+        # ① 先卖超配（整手，回现金扣卖费）；只调「体检判定为超配」的基金；sell_rebalance 关则跳过
+        if sell_rebalance:
+            for f in funds:
+                fid = f["fund_id"]
+                price = p.get(fid)
+                if price is None:
+                    warnings.append(f"{f['fund_code']} 年末再平衡当日无价，跳过该基金")
+                    continue
+                mv = shares.get(fid, 0) * price
+                need, status = _should_rebalance(f, d, total, mv, price)
+                if not need or status != "above":
+                    continue
+                target_mv = total * target_pct_for(f, d) / Decimal("100")
+                lot = price * _HANDS
+                hands = int((mv - target_mv) // lot)
+                if hands <= 0:
+                    continue
+                principal = hands * lot
+                fee = _calc_fee(principal, None, None, is_sell=True)
+                cash += principal - fee
+                shares[fid] = shares.get(fid, 0) - hands * _HANDS
+                trades.append(
+                    {
+                        "date": d,
+                        "fund_code": f["fund_code"],
+                        "fund_name": f["fund_name"],
+                        "side": "sell",
+                        "hands": hands,
+                        "price": price,
+                        "principal": principal,
+                        "fee": fee,
+                        "total_amount": principal,
+                        "reason": "annual",
+                    }
+                )
+        # ② 再买低配（卖出现金回流，填到目标）；只调「体检判定为低配」的基金；buy_rebalance 关则跳过
+        if buy_rebalance:
+            for f in funds:
+                fid = f["fund_id"]
+                price = p.get(fid)
+                if price is None or cash <= 0:
+                    continue
+                mv = shares.get(fid, 0) * price
+                need, status = _should_rebalance(f, d, total, mv, price)
+                if not need or status != "below":
+                    continue
+                target_mv = total * target_pct_for(f, d) / Decimal("100")
+                lot = price * _HANDS
+                gap = target_mv - mv
+                hands = min(int(gap // lot), int((cash - MIN_FEE) // lot))
+                if hands <= 0:
+                    continue
+                principal = hands * lot
+                fee = _calc_fee(principal, None, None, is_sell=False)
+                cash -= principal + fee
+                shares[fid] = shares.get(fid, 0) + hands * _HANDS
+                trades.append(
+                    {
+                        "date": d,
+                        "fund_code": f["fund_code"],
+                        "fund_name": f["fund_name"],
+                        "side": "buy",
+                        "hands": hands,
+                        "price": price,
+                        "principal": principal,
+                        "fee": fee,
+                        "total_amount": principal,
+                        "reason": "annual",
+                    }
+                )
 
     # ---- 主循环（按交易日，非逐日历日）----
     nav = 1.0
@@ -312,8 +378,11 @@ def run_backtest(
             i += 1
         p = prices_at(d)
         if dep_t > 0:
-            buy_side(d, p, "period")
-        if year_end_rebalance and d == year_ends.get(d.year):
+            if buy_rebalance:
+                buy_side(d, p, "period")
+            else:
+                dca_buy(d, p, dep_t, "period")
+        if d == year_ends.get(d.year) and (sell_rebalance or buy_rebalance):
             annual_rebalance(d, p)
         equity = sum(shares.get(fid, 0) * p[fid] for fid in p if p[fid] is not None)
         V = cash + equity
@@ -329,6 +398,17 @@ def run_backtest(
                 max_dd = dd
                 max_peak_date = peak_date  # 冻结该回撤发生时对应的峰值日期
                 trough_date = d
+        # 各标的持仓占比（%），现金以 000000 键承载（与真实系统口径一致）
+        alloc = {}
+        for f in funds:
+            fid = f["fund_id"]
+            pv = p.get(fid)
+            alloc[f["fund_code"]] = (
+                round(float(shares.get(fid, 0) * pv) / float(V) * 100, 2)
+                if (pv is not None and V > 0)
+                else 0.0
+            )
+        alloc["000000"] = round(float(cash) / float(V) * 100, 2) if V > 0 else 0.0
         points.append(
             {
                 "date": d,
@@ -338,6 +418,7 @@ def run_backtest(
                 "invested": invested,
                 "nav": nav,
                 "drawdown": dd,
+                "allocations": alloc,
             }
         )
         prev_V = V
@@ -374,7 +455,8 @@ def run_backtest(
             "amount": amount,
             "interval_days": interval,
             "rebalance_strategy": plan.rebalance_strategy,
-            "year_end_rebalance": year_end_rebalance,
+            "buy_rebalance": buy_rebalance,
+            "sell_rebalance": sell_rebalance,
             "unlisted_mode": unlisted_mode,
         },
         "metrics": {
@@ -624,7 +706,7 @@ def _segments(days: list[date]) -> list[dict]:
     return out
 
 
-def _empty(plan, warnings, amount, start_date, today, unlisted_mode="park") -> dict:
+def _empty(plan, warnings, amount, start_date, today, buy_rebalance=True, sell_rebalance=True, unlisted_mode="park") -> dict:
     return {
         "plan_id": plan.id,
         "plan_name": plan.name,
@@ -634,7 +716,8 @@ def _empty(plan, warnings, amount, start_date, today, unlisted_mode="park") -> d
             "amount": amount,
             "interval_days": plan.interval_days or 0,
             "rebalance_strategy": plan.rebalance_strategy,
-            "year_end_rebalance": True,
+            "buy_rebalance": buy_rebalance,
+            "sell_rebalance": sell_rebalance,
             "unlisted_mode": unlisted_mode,
         },
         "metrics": {

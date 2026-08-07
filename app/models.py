@@ -23,7 +23,7 @@ class DcaPlan(Base):
         Date, nullable=True, comment="起始日期（首次定投，作为间隔基准）"
     )
     interval_days: Mapped[int] = mapped_column(
-        Integer, nullable=False, default=90, comment="定投间隔天数（如 90 = 约每季）"
+        Integer, nullable=False, default=91, comment="定投间隔天数（如 91 = 约每季）"
     )
     tolerance_days: Mapped[int] = mapped_column(
         Integer, nullable=False, default=5, comment="容错天数：下次定投窗口 = 上次基准 + 间隔 ± 容错"
@@ -289,7 +289,7 @@ class PurchaseRecord(Base):
     price: Mapped[Decimal] = mapped_column(Numeric(10, 4), nullable=False, comment="每股价格")
     hands: Mapped[int] = mapped_column(Integer, nullable=False, comment="购买手数")
     shares_per_hand: Mapped[int] = mapped_column(Integer, nullable=False, default=100, comment="每手份数")
-    total_amount: Mapped[Decimal] = mapped_column(Numeric(14, 2), nullable=False, comment="花费总金额 = 本金 + 手续费")
+    total_amount: Mapped[Decimal] = mapped_column(Numeric(14, 2), nullable=False, comment="权益金额 = 本金/成交额（不含手续费）")
     fee: Mapped[Decimal] = mapped_column(Numeric(14, 2), nullable=False, default=5, comment="手续费(元)，默认 5")
     note: Mapped[Optional[str]] = mapped_column(String(255), nullable=True, comment="备注")
     created_at: Mapped[datetime] = mapped_column(

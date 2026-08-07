@@ -38,9 +38,15 @@ function todayStr() {
 }
 
 async function load() {
+  // planId 未定时不发请求：不带 plan_id 的 /holdings/total 会汇总全部方案、
+  // /cash 会回退到第一个方案，两者口径不一致，等 planId 有值再加载
+  if (props.planId == null) {
+    series.value = { dates: [], equity: [], asset: [], invested: [] }
+    render()
+    return
+  }
   const end = todayStr()
-  const params = { start_date: '2024-01-01', end_date: end }
-  if (props.planId != null) params.plan_id = props.planId // 走势随方案
+  const params = { start_date: '2024-01-01', end_date: end, plan_id: props.planId } // 走势随方案
   try {
     const [holdData, cashData] = await Promise.all([
       holdingsApi.total(params),
@@ -53,8 +59,10 @@ async function load() {
       .map((q) => [q.start_date, Number(q.budget)])
       .sort((a, b) => (a[0] < b[0] ? -1 : 1))
 
-    // 日期轴 = 权益日期 ∪ 现金日期 ∪ 预算日期 ∪ 今天
-    const dateSet = new Set([...Object.keys(equityMap), ...Object.keys(cashMap), ...budgetEvents.map((e) => e[0])])
+    // 日期轴 = 交易日（以权益流水为准）∪ 预算入账日 ∪ 今天
+    // 现金虽逐日历日产生，但并入交易日轴、按交易日取值/前值填充，
+    // 避免周末/节假日进入 x 轴造成权益/资产线出现平直台阶
+    const dateSet = new Set([...Object.keys(equityMap), ...budgetEvents.map((e) => e[0])])
     if (props.todayEquity != null) dateSet.add(end)
     const sortedDates = [...dateSet].sort((a, b) => (a < b ? -1 : 1))
 
@@ -73,8 +81,8 @@ async function load() {
         invested += budgetEvents[bIdx][1]
         bIdx += 1
       }
-      // 今日实时权益覆盖（3 点前未收盘）
-      if (d === end && props.todayEquity != null) lastEquity = props.todayEquity
+      // 今日实时权益覆盖（3 点前未收盘）；null 或 0（行情失败）时沿用 DB 历史值，不坠 0
+      if (d === end && props.todayEquity != null && props.todayEquity > 0) lastEquity = props.todayEquity
       equityLine.push(lastEquity)
       assetLine.push(lastEquity + lastCash)
       investedLine.push(invested)
@@ -95,7 +103,7 @@ function render() {
       legend: { ...legend, data: ['总权益', '总资产（权益+现金）', '累积投入'] },
       grid,
       xAxis: xAxis(series.value.dates),
-      yAxis: yAxis('金额（元）', { formatter: fmtNum }),
+      yAxis: yAxis('金额（元）', { formatter: (v) => fmtNum(v) }),
       dataZoom,
       series: [
         lineSeries('总权益', series.value.equity, colors.blue, { tooltipFormatter: (v) => fmtNum(v, 2) }),

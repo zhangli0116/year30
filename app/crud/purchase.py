@@ -5,7 +5,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app import models, schemas
-from app.crud.quarter import recalc_quarter
+from app.services.reconcile import reconcile_plan
 
 
 def get_purchase(db: Session, purchase_id: int) -> models.PurchaseRecord | None:
@@ -77,10 +77,8 @@ def _principal(data: dict) -> Decimal:
 
 
 def _total_amount(data: dict, principal: Decimal, fee: Decimal) -> Decimal:
-    """金额：买入 = 本金 + 手续费；卖出 = 成交额（本金），手续费另计。"""
-    if data.get("type") == "sell":
-        return principal.quantize(Decimal("0.01"))
-    return (principal + fee).quantize(Decimal("0.01"))
+    """金额（统一口径）：买/卖 total_amount 均为本金/成交额，不含手续费；手续费单独存 fee。"""
+    return principal.quantize(Decimal("0.01"))
 
 
 def create_purchase(
@@ -98,8 +96,8 @@ def create_purchase(
     db.add(record)
     db.commit()
     db.refresh(record)
-    if record.quarter_id is not None:
-        recalc_quarter(db, record.quarter_id)
+    # 统一对账：季度 + 每日现金流 + 每日权益流水
+    reconcile_plan(db, record.plan_id)
     return record
 
 
@@ -122,9 +120,9 @@ def create_purchases(
     db.commit()
     for r in records:
         db.refresh(r)
-    # 重算受影响季度（一次提交只重算一次）
-    for qid in {r.quarter_id for r in records if r.quarter_id is not None}:
-        recalc_quarter(db, qid)
+    # 统一对账：涉及的方案各重算一次（季度 + 每日现金流 + 每日权益流水）
+    for plan_id in {r.plan_id for r in records}:
+        reconcile_plan(db, plan_id)
     return records
 
 
@@ -133,7 +131,7 @@ def update_purchase(
     record: models.PurchaseRecord,
     payload: schemas.PurchaseUpdate,
 ) -> models.PurchaseRecord:
-    old_qid = record.quarter_id
+    old_plan = record.plan_id
     data = payload.model_dump(exclude_unset=True)
     # 传入 fee_rate 时重算手续费；fee 明确传入则直接用
     if "fee_rate" in data:
@@ -154,19 +152,16 @@ def update_purchase(
         record.total_amount = _total_amount(
             {"type": record.type}, principal, record.fee
         )
-    new_qid = record.quarter_id
     db.commit()
     db.refresh(record)
-    # 新旧季度都重算（跨季度移动时）
-    for qid in {old_qid, new_qid}:
-        if qid is not None:
-            recalc_quarter(db, qid)
+    # 新旧方案都统一对账（跨方案移动时）
+    for pid in {old_plan, record.plan_id}:
+        reconcile_plan(db, pid)
     return record
 
 
 def delete_purchase(db: Session, record: models.PurchaseRecord) -> None:
-    qid = record.quarter_id
+    plan = record.plan_id
     db.delete(record)
     db.commit()
-    if qid is not None:
-        recalc_quarter(db, qid)
+    reconcile_plan(db, plan)

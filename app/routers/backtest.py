@@ -39,14 +39,15 @@ def run(
     end_date: date | None = Query(None, description="回测结束日，缺省今天"),
     amount: Decimal | None = Query(None, description="每期金额覆盖，缺省用方案 amount"),
     benchmarks: str | None = Query(None, description="逗号分隔的基准 symbol"),
-    year_end_rebalance: bool = Query(True, description="年末卖出式再平衡开关"),
+    buy_rebalance: bool = Query(True, description="买入式再平衡（每期低配补买、超配不卖）；关=按目标比例纯定投"),
+    sell_rebalance: bool = Query(True, description="卖出式再平衡（年末超配卖出回现金）；与买入式可独立组合"),
     unlisted_mode: str = Query(
         "park",
         description="未上市标的处理：park=现金停泊(默认) / redistribute=比例重分配",
     ),
     db: Session = Depends(get_db),
 ) -> ApiResponse:
-    """回测：每期入账+买入式平衡，每年末卖出式再平衡，算年化回报并对比基准。"""
+    """回测：每期入账+买入式/纯定投平衡，年末卖出式再平衡（两开关可独立组合），算年化回报并对比基准。"""
     plan = crud.plan.get_plan(db, plan_id)
     if plan is None:
         return error(40403, f"方案 {plan_id} 不存在")
@@ -59,7 +60,8 @@ def run(
         end_date=end_date,
         amount=amount,
         benchmark_symbols=_split_symbols(benchmarks),
-        year_end_rebalance=year_end_rebalance,
+        buy_rebalance=buy_rebalance,
+        sell_rebalance=sell_rebalance,
         unlisted_mode=unlisted_mode,
     )
     logger.info(

@@ -357,11 +357,12 @@ const rows = computed(() => {
 })
 
 // 今天实时总权益 = 各基金市值之和（用实时行情价 × 持有份额，不含现金/手续费）
-const todayEquity = computed(() =>
-  rows.value
-    .filter((r) => !r.isCash && !r.isFee)
-    .reduce((s, r) => s + (r.mv || 0), 0)
-)
+// 行情失败（无任何有效实时价）时返回 null，让走势图沿用 DB 历史值，避免今日点坠 0
+const todayEquity = computed(() => {
+  const fundRows = rows.value.filter((r) => !r.isCash && !r.isFee)
+  if (!fundRows.some((r) => r.mv != null)) return null
+  return fundRows.reduce((s, r) => s + (r.mv || 0), 0)
+})
 
 // 市值占比 vs 规定比例：超配(above)/低配(below)/正常(normal)。
 // 判定用共享模块（相对带+底线+上限+金额底线），与「再平衡体检」页一致。

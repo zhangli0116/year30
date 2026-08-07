@@ -91,7 +91,7 @@ function render() {
         { ...xAxis(s.labels, { boundaryGap: true }), gridIndex: 1 },
       ],
       yAxis: [
-        yAxis('金额（元）', { formatter: fmtNum }),
+        yAxis('金额（元）', { formatter: (v) => fmtNum(v) }),
         {
           ...yAxis('权益占比（%）', {
             formatter: (v) => v + '%',

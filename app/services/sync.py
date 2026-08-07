@@ -89,9 +89,9 @@ def sync_all(db: Session) -> dict:
                 bars = provider.fetch_daily(symbol, start, today)
                 inserted, _existing = crud.price.upsert_bars(db, fund.id, bars, provider.name)
                 prices_inserted += inserted
-                # 增量：只补缺失交易日，不覆盖已有权益流水
+                # 重算 [start, today] 权益流水（含已存在行，避免新增购买后旧行过期）
                 holdings_generated += crud.holding.generate(
-                    db, plan.id, fund.id, start, today, only_missing=True
+                    db, plan.id, fund.id, start, today
                 )
             except Exception as e:  # noqa: BLE001
                 failures += 1
@@ -106,10 +106,8 @@ def sync_all(db: Session) -> dict:
         cash_start = min(
             [d for d in (plan_earliest, q_start) if isinstance(d, date)] or [today]
         )
-        # 增量：只补缺失日历日，不覆盖已有现金流
-        cash_generated += crud.cash.generate(
-            db, plan.id, cash_start, today, only_missing=True
-        )
+        # 重算 [cash_start, today] 现金流（含已存在行，避免新增季度/购买后旧行过期）
+        cash_generated += crud.cash.generate(db, plan.id, cash_start, today)
         if range_start is None or cash_start < range_start:
             range_start = cash_start
 

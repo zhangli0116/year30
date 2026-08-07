@@ -571,14 +571,12 @@ async function doSubmitQuarter() {
       price: r.price,
       hands: r.hands,
       shares_per_hand: 100,
-      total_amount: r.amount, // 本金 + 手续费
+      total_amount: r.principal, // 本金（不含手续费），手续费单独传 fee
       fee: r.fee,
       note: quarterNote.value || null,
     }))
-    await purchasesApi.batch(records)
+    await purchasesApi.batch(records)  // 后端统一对账：季度 + 每日现金流 + 每日权益流水
 
-    // 3) 回写 equity_amount / cash_amount
-    await quartersApi.recalc(quarterId)
     ElMessage.success(`已录入 ${records.length} 条记录（${period}）`)
     confirmVisible.value = false
     router.push('/purchases')

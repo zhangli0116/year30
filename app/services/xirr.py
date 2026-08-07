@@ -138,6 +138,25 @@ def twr_plan(db: Session, plan_id: int, today: date | None = None) -> dict | Non
             .where(models.FundPrice.fund_id == fid)
             .order_by(models.FundPrice.trade_date)
         ).all()
+    # 当日未收盘 / 获取不到收盘价：用实时价补"今日虚拟收盘"，使今日权益按实时价计
+    fund_codes = dict(
+        db.execute(
+            select(models.Fund.id, models.Fund.fund_code).where(
+                models.Fund.fund_code != "000000", models.Fund.id.in_(fund_ids)
+            )
+        ).all()
+    )
+    rt_codes = []
+    for fid in fund_ids:
+        code = fund_codes.get(fid)
+        if code and (not price_series[fid] or price_series[fid][-1][0] < today):
+            rt_codes.append(code)
+    if rt_codes:
+        rt = _price_map(db, rt_codes)
+        for fid in fund_ids:
+            code = fund_codes.get(fid)
+            if code in rt and (not price_series[fid] or price_series[fid][-1][0] < today):
+                price_series[fid].append((today, float(rt[code])))
     # 每日现金
     cash_map = {
         d: float(c)
@@ -379,13 +398,14 @@ def fund_xirr(
     invested = 0.0
     shares = 0
     for rec in records:
-        amt = float(rec.total_amount)
+        amt = float(rec.total_amount)  # total_amount 统一为不含手续费的本金/成交额
         if rec.type == "sell":
             flows.append((rec.purchase_date, amt - float(rec.fee or 0)))
             shares -= rec.hands * rec.shares_per_hand
         else:
-            flows.append((rec.purchase_date, -amt))
-            invested += amt
+            # 买入真实现金流出 = 本金 + 手续费
+            flows.append((rec.purchase_date, -(amt + float(rec.fee or 0))))
+            invested += amt + float(rec.fee or 0)
             shares += rec.hands * rec.shares_per_hand
     current_mv = 0.0
     if price is None:

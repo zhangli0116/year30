@@ -194,7 +194,7 @@ function render() {
       tooltip,
       grid: gridSlim,
       xAxis: xAxis(dates),
-      yAxis: yAxis('权益金额（元）', { formatter: fmtNum }),
+      yAxis: yAxis('权益金额（元）', { formatter: (v) => fmtNum(v) }),
       dataZoom,
       series: [
         {

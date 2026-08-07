@@ -79,10 +79,12 @@ import { cashApi } from '../api'
 import PlanSwitcher from '../components/PlanSwitcher.vue'
 import {
   averageMarkLine,
+  barSeries,
   colors,
   dataZoom,
   fmtNum,
-  gridSlim,
+  grid,
+  legend,
   lineSeries,
   tooltip,
   xAxis,
@@ -171,12 +173,17 @@ function render() {
   if (!chart) chart = echarts.init(chartEl.value)
   const dates = rows.value.map((r) => r.trade_date)
   const cash = rows.value.map((r) => Number(r.cash_amount))
+  const increments = rows.value.map((r) => Number(r.increment))
   chart.setOption(
     {
       tooltip,
-      grid: gridSlim,
+      legend,
+      grid,
       xAxis: xAxis(dates),
-      yAxis: yAxis('现金（元）', { formatter: fmtNum }),
+      yAxis: [
+        yAxis('现金（元）', { formatter: (v) => fmtNum(v) }),
+        yAxis('每日增量（元）', { formatter: (v) => fmtNum(v), splitLine: { show: false } }),
+      ],
       dataZoom,
       series: [
         {
@@ -185,6 +192,10 @@ function render() {
           }),
           markLine: averageMarkLine(),
         },
+        barSeries('每日增量', increments, colors.orange, {
+          yAxisIndex: 1,
+          tooltipFormatter: (v) => fmtNum(v, 2),
+        }),
       ],
     },
     true

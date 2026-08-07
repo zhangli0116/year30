@@ -129,7 +129,7 @@ export const rebalanceApi = {
 
 export const backtestApi = {
   // GET /api/v1/backtest → 回测结果
-  // params: {plan_id, start_date, end_date?, amount?, benchmarks?(逗号分隔), year_end_rebalance?}
+  // params: {plan_id, start_date, end_date?, amount?, benchmarks?(逗号分隔), buy_rebalance?, sell_rebalance?}
   run: (params) => request.get('/backtest', { params }),
   // GET /api/v1/backtest/coverage → 数据覆盖检查
   coverage: (params) => request.get('/backtest/coverage', { params }),

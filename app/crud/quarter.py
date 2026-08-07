@@ -49,6 +49,9 @@ def create_quarter(db: Session, payload: schemas.QuarterCreate) -> models.Quarte
     db.add(quarter)
     db.commit()
     db.refresh(quarter)
+    from app.services.reconcile import reconcile_plan  # 延迟导入避免循环
+
+    reconcile_plan(db, quarter.plan_id)
     return quarter
 
 
@@ -63,6 +66,10 @@ def update_quarter(
         quarter.cash_amount = quarter.budget - quarter.equity_amount - quarter.total_fee
     db.commit()
     db.refresh(quarter)
+    if budget_changed:
+        from app.services.reconcile import reconcile_plan  # 延迟导入避免循环
+
+        reconcile_plan(db, quarter.plan_id)
     return quarter
 
 
@@ -75,16 +82,12 @@ def recalc_quarter(db: Session, quarter_id: int) -> models.Quarter | None:
     cash_fund_id = db.scalar(
         select(models.Fund.id).where(models.Fund.fund_code == "000000")
     )
-    # equity = Σ买入本金 − Σ卖出额；total_fee = Σ全部手续费
+    # equity = Σ买入本金 − Σ卖出额；total_fee = Σ全部手续费（total_amount 统一为不含手续费的本金/成交额）
     stmt = select(
         func.coalesce(
             func.sum(
                 case(
-                    (
-                        models.PurchaseRecord.type == "buy",
-                        models.PurchaseRecord.total_amount
-                        - func.coalesce(models.PurchaseRecord.fee, 0),
-                    ),
+                    (models.PurchaseRecord.type == "buy", models.PurchaseRecord.total_amount),
                     else_=0,
                 )
             ),
@@ -117,5 +120,9 @@ def recalc_quarter(db: Session, quarter_id: int) -> models.Quarter | None:
 
 
 def delete_quarter(db: Session, quarter: models.Quarter) -> None:
+    plan = quarter.plan_id
     db.delete(quarter)
     db.commit()
+    from app.services.reconcile import reconcile_plan  # 延迟导入避免循环
+
+    reconcile_plan(db, plan)

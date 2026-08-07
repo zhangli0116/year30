@@ -12,7 +12,7 @@
       <template #header>
         <div class="card-header">
           <span>回测参数</span>
-          <span class="header-note">每期入账后买入式平衡（低配补买、超配不卖），每年末卖出式再平衡；整手=100份、买0.03%/卖0.07%、min ¥5</span>
+          <span class="header-note">买入式=每期低配补买、超配不卖；卖出式=年末超配卖出回现金；两开关可独立组合（都开/都关/单开）；整手=100份、买0.03%/卖0.07%、min ¥5</span>
         </div>
       </template>
 
@@ -39,7 +39,10 @@
           />
         </div>
         <div class="ctl">
-          <el-switch v-model="yearEndRebalance" active-text="年末卖出式再平衡" />
+          <el-switch v-model="buyRebalance" active-text="买入式再平衡" />
+        </div>
+        <div class="ctl">
+          <el-switch v-model="sellRebalance" active-text="卖出式再平衡" />
         </div>
         <div class="ctl">
           <el-select v-model="unlistedMode" style="width: 190px" title="方案内标的在回测起始时未上市（无历史价）时的处理">
@@ -216,6 +219,10 @@
         <div class="chart-title">基准对比（净值，起点=1）</div>
         <div ref="benchChartEl" class="chart-box" v-loading="loading"></div>
       </div>
+      <div v-if="result" class="chart-card">
+        <div class="chart-title">持仓占比（各标的 + 现金）</div>
+        <div ref="allocChartEl" class="chart-box" v-loading="loading"></div>
+      </div>
 
       <!-- 交易明细 -->
       <div v-if="result" class="chart-card">
@@ -280,7 +287,8 @@ const router = useRouter()
 const planId = ref(null)
 const startDate = ref('')
 const amount = ref(null)
-const yearEndRebalance = ref(true)
+const buyRebalance = ref(true) // 买入式再平衡（每期低配补买）
+const sellRebalance = ref(true) // 卖出式再平衡（年末超配卖出）
 const unlistedMode = ref('park') // 未上市标的处理：park=现金停放 / redistribute=比例重分配
 const benchmarks = ref([])
 const benchmarkList = ref([])
@@ -295,9 +303,11 @@ const warnings = ref([])
 const assetChartEl = ref(null)
 const ddChartEl = ref(null)
 const benchChartEl = ref(null)
+const allocChartEl = ref(null)
 let assetChart = null
 let ddChart = null
 let benchChart = null
+let allocChart = null
 
 // ---- 派生 ----
 // 覆盖不完整的项，按是否可补拆分：
@@ -393,7 +403,8 @@ function backtestParams() {
     end_date: todayStr(),
     ...(amount.value ? { amount: amount.value } : {}),
     ...(benchmarks.value.length ? { benchmarks: benchmarks.value.join(',') } : {}),
-    year_end_rebalance: yearEndRebalance.value,
+    buy_rebalance: buyRebalance.value,
+    sell_rebalance: sellRebalance.value,
     unlisted_mode: unlistedMode.value,
   }
 }
@@ -466,8 +477,8 @@ async function runBacktest() {
 }
 
 function disposeCharts() {
-  ;[assetChart, ddChart, benchChart].forEach((c) => c && c.dispose())
-  assetChart = ddChart = benchChart = null
+  ;[assetChart, ddChart, benchChart, allocChart].forEach((c) => c && c.dispose())
+  assetChart = ddChart = benchChart = allocChart = null
 }
 
 // ---- 图表 ----
@@ -478,7 +489,7 @@ function dates() {
 function renderAssetChart() {
   if (!assetChartEl.value) return
   if (!assetChart) assetChart = echarts.init(assetChartEl.value)
-  const pts = result.value.points
+  const pts = result.value.points || []
   const ds = dates()
   assetChart.setOption(
     {
@@ -486,7 +497,7 @@ function renderAssetChart() {
       legend: { ...legend, data: ['总资产', '累计投入'] },
       grid,
       xAxis: xAxis(ds),
-      yAxis: yAxis('金额（元）', { formatter: fmtNum }),
+      yAxis: yAxis('金额（元）', { formatter: (v) => fmtNum(v) }),
       dataZoom,
       series: [
         lineSeries('总资产', pts.map((p) => Number(p.asset)), colors.blue, {
@@ -563,16 +574,69 @@ function renderBenchChart() {
   )
 }
 
+// 持仓占比 stacked area：现金置底，各标的按代码排序，逐日占比合计 100%
+function renderAllocChart() {
+  if (!allocChartEl.value) return
+  if (!allocChart) allocChart = echarts.init(allocChartEl.value)
+  const pts = result.value.points || []
+  const ds = dates()
+  const fundKeys = Object.keys(pts[0]?.allocations || {})
+    .filter((k) => k !== '000000')
+    .sort()
+  const keys = ['000000', ...fundKeys]
+  // 现金固定灰色；基金用不含 gray 的独立色池循环（≥8 只才可能彼此重复，永不与现金撞色）
+  const fundPool = [
+    colors.blue,
+    colors.green,
+    colors.orange,
+    colors.red,
+    colors.violet,
+    '#00bcd4', // cyan
+    '#9c27b0', // magenta
+    '#8d6e63', // brown
+  ]
+  const series = keys.map((k, idx) => {
+    const color = k === '000000' ? colors.gray : fundPool[(idx - 1) % fundPool.length]
+    return {
+      name: k === '000000' ? '现金' : k,
+      type: 'line',
+      stack: 'all',
+      smooth: true,
+      showSymbol: false,
+      lineStyle: { width: 0 },
+      itemStyle: { color },
+      areaStyle: { color, opacity: 0.72 },
+      emphasis: { focus: 'series' },
+      data: pts.map((p) => Number(p.allocations?.[k] ?? 0)),
+    }
+  })
+  const pct = (v) => (v == null ? '-' : `${v}%`)
+  allocChart.setOption(
+    {
+      tooltip: { ...tooltip, valueFormatter: (v) => (v == null ? '-' : pct(v)) },
+      legend: { ...legend, data: series.map((s) => s.name) },
+      grid,
+      xAxis: xAxis(ds),
+      yAxis: yAxis('占比（%）', { formatter: pct, min: 0, max: 100 }),
+      dataZoom,
+      series,
+    },
+    true
+  )
+}
+
 function renderAll() {
   renderAssetChart()
   renderDDChart()
   renderBenchChart()
+  renderAllocChart()
 }
 
 function onResize() {
   assetChart && assetChart.resize()
   ddChart && ddChart.resize()
   benchChart && benchChart.resize()
+  allocChart && allocChart.resize()
 }
 
 // ---- 格式化 ----

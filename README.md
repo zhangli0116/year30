@@ -97,7 +97,7 @@ ui/
 
 - **fund**：基金维度，含 `target_ratio`（规定比例%）
 - **quarter**：季度汇总，`budget`(预算) / `equity_amount`(权益本金，不含手续费) / `total_fee`(手续费总额) / `cash_amount`(剩余现金 = budget − equity − total_fee)
-- **purchase_record**：购买记录，`type`('buy'/'sell')，`fee`(手续费)，`total_amount`(买入=本金+费，卖出=成交额)；`quarter_id` 关联季度
+- **purchase_record**：购买记录，`type`('buy'/'sell')，`fee`(手续费)，`total_amount`(本金/成交额，不含手续费)；`quarter_id` 关联季度
   - 手续费：买入默认 0.03%、卖出默认 0.07%，`max(5, 金额×费率)`
 - **fund_price**：历史日线 OHLC（数据源可切换，默认腾讯前复权）
 - **fund_holding_daily**：每日权益流水 = 累计持有份额 × 当日收盘价
@@ -181,7 +181,7 @@ ui/
 ### 方案回测 backtest
 | 方法 | 路径 | 说明 |
 |---|---|---|
-| GET | `/backtest` | 回测（plan_id + start_date + end_date?/amount?/benchmarks?/year_end_rebalance?/unlisted_mode?），返回 XIRR 年化/TWR/最大回撤/每日曲线/交易明细/基准对比；`unlisted_mode` = park(未上市标的现金停放,默认)/redistribute(比例重分配)；年末卖出式再平衡采用「再平衡体检」判定参数（阈值触发，与体检页一致） |
+| GET | `/backtest` | 回测（plan_id + start_date + end_date?/amount?/benchmarks?/buy_rebalance?/sell_rebalance?/unlisted_mode?），返回 XIRR 年化/TWR/最大回撤/每日曲线/持仓占比序列/交易明细/基准对比；`buy_rebalance`=买入式再平衡、`sell_rebalance`=卖出式再平衡（两开关可独立组合，都关=纯定投）；`unlisted_mode` = park(未上市标的现金停放,默认)/redistribute(比例重分配)；年末卖出式再平衡采用「再平衡体检」判定参数（阈值触发，与体检页一致） |
 | GET | `/backtest/coverage` | 数据覆盖检查（各基金 + 所选基准在区间的缺失情况，`ready` 是否全部覆盖） |
 
 ### 对比基准 benchmarks

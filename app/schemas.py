@@ -70,7 +70,7 @@ class PurchaseCreate(BaseModel):
     hands: int = Field(..., gt=0, description="手数（卖出时也为手数）")
     shares_per_hand: int = Field(100, gt=0, description="每手份数")
     total_amount: Optional[Decimal] = Field(
-        None, gt=0, decimal_places=2, description="金额：买入=本金+手续费；卖出=成交额，不传则自动计算"
+        None, gt=0, decimal_places=2, description="权益金额 = 本金/成交额（不含手续费），不传则自动计算"
     )
     fee: Optional[Decimal] = Field(
         None, ge=0, decimal_places=2, description="手续费(元)，不传则按费率计算（默认 0.03%，不足 5 元按 5 元）"
@@ -90,7 +90,7 @@ class PurchaseUpdate(BaseModel):
     price: Optional[Decimal] = Field(None, gt=0, decimal_places=4, description="每股价格")
     hands: Optional[int] = Field(None, gt=0, description="购买手数")
     shares_per_hand: Optional[int] = Field(None, gt=0, description="每手份数")
-    total_amount: Optional[Decimal] = Field(None, gt=0, decimal_places=2, description="花费总金额")
+    total_amount: Optional[Decimal] = Field(None, gt=0, decimal_places=2, description="权益金额 = 本金/成交额（不含手续费）")
     fee: Optional[Decimal] = Field(None, ge=0, decimal_places=2, description="手续费(元)")
     fee_rate: Optional[Decimal] = Field(None, ge=0, le=100, decimal_places=4, description="手续费费率(%)，默认 0.03")
     note: Optional[str] = Field(None, max_length=255, description="备注")
@@ -359,7 +359,7 @@ class PlanFundIn(BaseModel):
 class PlanCreate(BaseModel):
     name: str = Field(..., min_length=1, max_length=64, description="方案名")
     start_date: Optional[date] = Field(None, description="起始日期（首次定投，间隔基准）")
-    interval_days: int = Field(90, ge=1, description="定投间隔天数（如 90 = 约每季）")
+    interval_days: int = Field(91, ge=1, description="定投间隔天数（如 91 = 约每季）")
     tolerance_days: int = Field(5, ge=0, description="容错天数：下次窗口 = 基准 + 间隔 ± 容错")
     amount: Decimal = Field(0, ge=0, decimal_places=2, description="每次投入金额")
     rebalance_strategy: Literal["buy", "sell", "check"] = "check"
@@ -484,7 +484,7 @@ class RebalanceFundOut(BaseModel):
     target: Optional[float] = None  # 目标比例(%)
     real: float  # 当前占比(%)
     deviation: float  # 偏离(百分点)
-    deviation_amount: float  # 偏离金额(元)
+    deviation_amount: Optional[float] = None  # 偏离金额(元)，无持仓组合(total=0)时为 None
     threshold: Optional[float] = None  # 判定阈值(%)，未设目标时 None
     status: str = "normal"  # above / below / normal（后端统一判定）
     suggestion: str = "—"  # 建议动作文本（后端计算）
@@ -494,7 +494,7 @@ class RebalanceCashOut(BaseModel):
     target: float
     real: float
     deviation: float
-    deviation_amount: float
+    deviation_amount: Optional[float] = None  # 无持仓组合(total=0)时为 None
     threshold: float
     status: str = "normal"
     suggestion: str = "—"
@@ -580,6 +580,7 @@ class BacktestPointOut(BaseModel):
     invested: Decimal  # 累计投入
     nav: float  # TWR 累计净值
     drawdown: float  # 相对历史峰值回撤（≤0）
+    allocations: dict[str, float] = Field(default_factory=dict)  # 各标的持仓占比(%)，现金键 000000
 
 
 class BacktestMetricsOut(BaseModel):
@@ -619,7 +620,8 @@ class BacktestParamsOut(BaseModel):
     amount: Decimal
     interval_days: int
     rebalance_strategy: str
-    year_end_rebalance: bool = True
+    buy_rebalance: bool = True  # 买入式再平衡（每期低配补买）
+    sell_rebalance: bool = True  # 卖出式再平衡（年末超配卖出）
     unlisted_mode: str = "park"  # 未上市标的处理：park=现金停泊 / redistribute=比例重分配
 
 

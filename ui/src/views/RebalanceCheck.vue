@@ -115,7 +115,7 @@
           </template>
         </el-table-column>
         <el-table-column label="偏离金额" width="120" align="right">
-          <template #default="{ row }">{{ signedMoney(row.deviation_amount) }}</template>
+          <template #default="{ row }">{{ row.deviation_amount == null ? '-' : signedMoney(row.deviation_amount) }}</template>
         </el-table-column>
         <el-table-column label="状态" width="90" align="center">
           <template #default="{ row }">

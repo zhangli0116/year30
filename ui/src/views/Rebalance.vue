@@ -456,7 +456,7 @@ async function execute() {
         price: r.price,
         hands: r.actHands,
         shares_per_hand: 100,
-        total_amount: r.action === 'sell' ? r.actPrincipal : +(r.actPrincipal + r.fee).toFixed(2),
+        total_amount: r.actPrincipal, // 本金/成交额（不含手续费），手续费单独传 fee
         fee: r.fee,
         note: period + ' 再平衡' + (r.action === 'sell' ? '·卖出' : '·买入'),
       }))
@@ -464,10 +464,8 @@ async function execute() {
       ElMessage.warning('无可执行的买卖')
       return
     }
-    await purchasesApi.batch(records)
+    await purchasesApi.batch(records)  // 后端统一对账：季度 + 每日现金流 + 每日权益流水
 
-    // 3) 回写季度
-    await quartersApi.recalc(quarterId)
     ElMessage.success(`再平衡完成：${records.filter((r) => r.type === 'sell').length} 笔卖出，${records.filter((r) => r.type === 'buy').length} 笔买入`)
     confirmVisible.value = false
     router.push('/purchases')

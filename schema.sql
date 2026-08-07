@@ -3,8 +3,8 @@
 -- 业务规则：
 --   1. 每季度买入若干只指数基金
 --   2. 一手 = 100 份；购买以"手"为单位
---   3. 每次记录：购买时间、基金代码/名称、每股价格、购买手数、总花费金额
--- 金额 = 手数 × 每手份数(100) × 每股价格（如另有手续费可自行计入 total_amount）
+--   3. 每次记录：购买时间、基金代码/名称、每股价格、购买手数、权益金额
+-- 权益金额(total_amount) = 手数 × 每手份数(100) × 每股价格，不含手续费；手续费单独存 fee 列
 -- =============================================
 
 DROP DATABASE IF EXISTS fund_invest;
@@ -95,7 +95,7 @@ CREATE TABLE purchase_record (
     price           DECIMAL(10,4)   NOT NULL COMMENT '每股/每份价格，如 2.6760',
     hands           INT UNSIGNED    NOT NULL COMMENT '购买手数（以手为单位）',
     shares_per_hand INT UNSIGNED    NOT NULL DEFAULT 100 COMMENT '每手份数，1手=100份',
-    total_amount    DECIMAL(14,2)   NOT NULL COMMENT '本次花费总金额 = 本金 + 手续费',
+    total_amount    DECIMAL(14,2)   NOT NULL COMMENT '权益金额 = 本金/成交额（不含手续费），手续费单独存 fee',
     fee             DECIMAL(14,2)   NOT NULL DEFAULT 5.00 COMMENT '手续费(元)，默认 5；费率默认 0.03%，不足 5 元按 5 元',
     note            VARCHAR(255)    NULL COMMENT '备注，如 2026Q1 定投',
     created_at      DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '记录创建时间',
@@ -196,7 +196,7 @@ CREATE TABLE fund_holding_daily (
 
 -- --------------------------------------------------
 -- 表 7：每日现金流量表（日历日累计现金余额，按方案拆分）
--- 增量 = 方案周期预算入账(+budget) − 买入支出(−buy total_amount，含费) + 卖出回笼(+sell total_amount) − 卖出手续费(−sell fee)
+-- 增量 = 方案周期预算入账(+budget) − 买入支出(−(buy total_amount + fee)，total_amount 不含手续费) + 卖出回笼(+sell total_amount) − 卖出手续费(−sell fee)
 -- --------------------------------------------------
 CREATE TABLE fund_cash_daily (
     id          INT UNSIGNED   NOT NULL AUTO_INCREMENT COMMENT '主键ID',

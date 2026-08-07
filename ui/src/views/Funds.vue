@@ -269,7 +269,7 @@ const planEditingId = ref(null)
 const planForm = reactive({
   name: '',
   start_date: null,
-  interval_days: 90,
+  interval_days: 91,
   tolerance_days: 5,
   amount: null,
   rebalance_strategy: 'check',
@@ -282,7 +282,7 @@ const intervalPresets = [
   { label: '日（1 天）', value: 1 },
   { label: '周（7 天）', value: 7 },
   { label: '月（30 天）', value: 30 },
-  { label: '季（90 天）', value: 90 },
+  { label: '季（91 天）', value: 91 },
 ]
 const planRules = {
   name: [{ required: true, message: '请输入方案名称', trigger: 'blur' }],
@@ -419,7 +419,7 @@ function openPlanCreate() {
   Object.assign(planForm, {
     name: '',
     start_date: null,
-    interval_days: 90,
+    interval_days: 91,
     tolerance_days: 5,
     amount: null,
     rebalance_strategy: 'check',
@@ -435,7 +435,7 @@ function openPlanEdit(row) {
   Object.assign(planForm, {
     name: row.name,
     start_date: row.start_date || null,
-    interval_days: row.interval_days != null ? row.interval_days : 90,
+    interval_days: row.interval_days != null ? row.interval_days : 91,
     tolerance_days: row.tolerance_days != null ? row.tolerance_days : 5,
     amount: row.amount != null ? Number(row.amount) : null,
     rebalance_strategy: row.rebalance_strategy,

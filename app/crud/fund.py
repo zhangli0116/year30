@@ -128,20 +128,21 @@ def summarize_funds(db: Session, plan_id: int | None = None) -> dict:
                     * models.PurchaseRecord.shares_per_hand,
                 )
             ).label("total_shares"),
-            # 累计投入 = 买入本金(不含手续费) − 卖出额
+            # 累计投入 = 买入本金 − 卖出额（total_amount 统一为不含手续费的本金/成交额）
             func.sum(
                 case(
                     (
                         models.PurchaseRecord.type == "sell",
                         -models.PurchaseRecord.total_amount,
                     ),
-                    else_=models.PurchaseRecord.total_amount
-                    - func.coalesce(models.PurchaseRecord.fee, 0),
+                    else_=models.PurchaseRecord.total_amount,
                 )
             ).label("total_cost"),
         )
         .outerjoin(models.PurchaseRecord, join_cond)
         .group_by(models.Fund.id, models.Fund.fund_code, models.Fund.fund_name)
+        # 持仓汇总只展示实际买过的基金；无购买记录的基金（如回测/基准用标的）不出现
+        .having(func.count(models.PurchaseRecord.id) > 0)
         .order_by(models.Fund.fund_code)
     ).all()
 

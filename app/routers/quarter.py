@@ -54,12 +54,18 @@ def update_quarter(
 
 @router.post("/{quarter_id}/recalc", response_model=ApiResponse[schemas.QuarterOut])
 def recalc_quarter(quarter_id: int, db: Session = Depends(get_db)) -> ApiResponse:
-    """按本季购买记录重算 equity_amount / cash_amount（一键录入后调用）。"""
-    result = crud.quarter.recalc_quarter(db, quarter_id)
-    if result is None:
+    """按本季购买记录统一对账：重算季度汇总 + 每日现金流 + 每日权益流水（一键录入后调用）。"""
+    quarter = crud.quarter.get_quarter(db, quarter_id)
+    if quarter is None:
         return error(40402, f"季度 {quarter_id} 不存在")
-    logger.info(f"重算季度 id={quarter_id}：权益{result.equity_amount} 手续费{result.total_fee} 现金{result.cash_amount}")
-    return success(result)
+    from app.services.reconcile import reconcile_plan
+
+    reconcile_plan(db, quarter.plan_id)
+    updated = crud.quarter.get_quarter(db, quarter_id)
+    logger.info(
+        f"统一对账季度 id={quarter_id}：权益{updated.equity_amount} 手续费{updated.total_fee} 现金{updated.cash_amount}"
+    )
+    return success(updated)
 
 
 @router.delete("/{quarter_id}", response_model=ApiResponse)

@@ -135,18 +135,18 @@ def main() -> None:
                 text(
                     "ALTER TABLE dca_plan "
                     "ADD COLUMN start_date DATE NULL COMMENT '起始日期' AFTER name, "
-                    "ADD COLUMN interval_days INT NOT NULL DEFAULT 90 COMMENT '定投间隔天数' AFTER start_date, "
+                    "ADD COLUMN interval_days INT NOT NULL DEFAULT 91 COMMENT '定投间隔天数' AFTER start_date, "
                     "ADD COLUMN tolerance_days INT NOT NULL DEFAULT 5 COMMENT '容错天数' AFTER interval_days"
                 )
             )
             print("  dca_plan +start_date/interval_days/tolerance_days")
-            # 回填默认方案：起始日期 = 最早 quarter.start_date，间隔 90 天
+            # 回填默认方案：起始日期 = 最早 quarter.start_date，间隔 91 天
             earliest = db.execute(
                 text("SELECT MIN(start_date) FROM quarter WHERE plan_id=:pid"), {"pid": _default_plan_id}
             ).scalar()
             db.execute(
                 text(
-                    "UPDATE dca_plan SET start_date=:sd, interval_days=90, tolerance_days=5 WHERE id=:pid"
+                    "UPDATE dca_plan SET start_date=:sd, interval_days=91, tolerance_days=5 WHERE id=:pid"
                 ),
                 {"sd": earliest, "pid": _default_plan_id},
             )

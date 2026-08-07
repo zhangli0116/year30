@@ -197,6 +197,8 @@ function depthPct(v) {
 
 const chartEl = ref(null)
 let chart = null
+// 最近一次渲染的数据源 key（基金+日期区间）；变化时重置缩放，仅刷新时保留
+let lastRenderKey = ''
 
 function defaultRange() {
   const now = new Date()
@@ -256,6 +258,14 @@ function fmtVol(v) {
   if (v == null) return '-'
   const n = Number(v)
   if (n >= 10000) return (n / 10000).toFixed(1) + '万'
+  return String(Math.round(n))
+}
+
+// 成交量轴刻度/悬停：取整到万（<10000 显示原值），与轴单位"万"保持一致
+function fmtVolShort(v) {
+  if (v == null) return '-'
+  const n = Number(v)
+  if (n >= 10000) return Math.round(n / 10000) + '万'
   return String(Math.round(n))
 }
 
@@ -328,22 +338,40 @@ function render() {
   if (!chart) chart = echarts.init(chartEl.value)
   const dates = bars.value.map((b) => b.trade_date)
   // ECharts candlestick 数据格式：[open, close, low, high]
-  const data = bars.value.map((b) => [
-    Number(b.open_price),
-    Number(b.close_price),
-    Number(b.low_price),
-    Number(b.high_price),
-  ])
-  // 成交量柱：阳线红、阴线绿
-  const volData = bars.value.map((b) => ({
-    value: Number(b.volume || 0),
-    itemStyle: {
-      color:
-        Number(b.close_price) >= Number(b.open_price)
-          ? '#f56c6c'
-          : '#67c23a',
-    },
-  }))
+  const data = []
+  const volData = []
+  bars.value.forEach((b) => {
+    const o = Number(b.open_price)
+    const c = Number(b.close_price)
+    const l = Number(b.low_price)
+    const h = Number(b.high_price)
+    if (!o || !c || !l || !h) {
+      // 任一 OHLC 无效（null/0）→ 跳过该 bar（push null，ECharts 断开该段）
+      data.push(null)
+      volData.push(null)
+      return
+    }
+    data.push([o, c, l, h])
+    // 成交量柱：阳线红、阴线绿
+    volData.push({
+      value: Number(b.volume || 0),
+      itemStyle: { color: c >= o ? '#f56c6c' : '#67c23a' },
+    })
+  })
+  // 数据源变化（换基金/改日期区间）→ 重置缩放；仅刷新（如同步后重绘）→ 保留用户缩放
+  const key = `${fundId.value}|${startDate.value}|${endDate.value}`
+  const forceReset = key !== lastRenderKey || bars.value.length === 0
+  lastRenderKey = key
+  let zoomStart = 0
+  let zoomEnd = 100
+  if (!forceReset) {
+    const cur = chart.getOption().dataZoom
+    const dz = Array.isArray(cur) ? cur[0] : cur
+    if (dz && typeof dz.start === 'number' && typeof dz.end === 'number') {
+      zoomStart = dz.start
+      zoomEnd = dz.end
+    }
+  }
   chart.setOption(
     {
       tooltip: { trigger: 'axis', axisPointer: { type: 'cross' } },
@@ -377,13 +405,13 @@ function render() {
           splitLine: { show: false },
           axisLabel: {
             fontSize: 10,
-            formatter: (v) => (v >= 10000 ? v / 10000 + '万' : v),
+            formatter: fmtVolShort,
           },
         },
       ],
       dataZoom: [
-        { type: 'inside', xAxisIndex: [0, 1], start: 0, end: 100 },
-        { type: 'slider', xAxisIndex: [0, 1], start: 0, end: 100, height: 20 },
+        { type: 'inside', xAxisIndex: [0, 1], start: zoomStart, end: zoomEnd },
+        { type: 'slider', xAxisIndex: [0, 1], start: zoomStart, end: zoomEnd, height: 20 },
       ],
       series: [
         {
@@ -403,10 +431,11 @@ function render() {
           xAxisIndex: 1,
           yAxisIndex: 1,
           data: volData,
+          tooltip: { valueFormatter: fmtVolShort },
         },
       ],
     },
-    true
+    forceReset
   )
 }
 

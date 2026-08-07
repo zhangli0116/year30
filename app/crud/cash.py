@@ -9,17 +9,16 @@ from app import models
 CASH_FUND_CODE = "000000"
 
 
-def generate(
-    db: Session, plan_id: int, start_date: date, end_date: date, only_missing: bool = False
-) -> int:
+def generate(db: Session, plan_id: int, start_date: date, end_date: date) -> int:
     """生成每日现金流：按日历日累计（按方案拆分）。
 
     每日增量 = 方案周期预算入账(quarter.start_date, +budget)
-             − 买入支出(−buy total_amount，已含手续费)
+             − 买入支出(−(buy total_amount + fee)，total_amount 为不含手续费的买入本金)
              ＋ 卖出回笼(+sell total_amount)
              − 卖出手续费(−sell fee)
     现金基金(000000)的记录不计入（其本身是现金，不是真实买卖）。
-    only_missing=True 时跳过已有日期（增量补缺失，不覆盖存量）。
+    对整个 [start_date, end_date] 重算（含已存在行）：日期上新增季度/购买记录后旧行会过期，
+    必须覆盖而非只补缺失（否则增量生成会留下过期数据，如 Q3 预算/买入漏进现金流）。
     """
     # 现金基金 id
     cash_fund_id = db.scalar(
@@ -53,13 +52,15 @@ def generate(
         if p.type == "sell":
             events[d] = events.get(d, Decimal("0")) + p.total_amount - p.fee
         else:
-            events[d] = events.get(d, Decimal("0")) - p.total_amount
+            events[d] = events.get(d, Decimal("0")) - (p.total_amount + p.fee)
 
     if not events:
         return 0
 
-    # 2) 从最早事件日开始按日历日累计，只在 [start, end] 内落行
-    day = min(events.keys())
+    # 2) 从 start_date 与最早事件日之间的更早者开始按日历日累计，只在 [start, end] 内落行
+    #    事件首日之前的日历日也要落行（increment=0、cash_amount=0，首个入账前现金为 0），
+    #    否则 check_missing 会把 [start_date, 事件首日) 计为缺失且永远补不上。
+    day = min(start_date, min(events.keys()))
     cash = Decimal("0")
     existing = {
         r.trade_date: r
@@ -70,7 +71,7 @@ def generate(
     count = 0
     while day <= end_date:
         cash += events.get(day, Decimal("0"))
-        if day >= start_date and not (only_missing and day in existing):
+        if day >= start_date:
             row = existing.get(day)
             if row is None:
                 row = models.FundCashDaily(plan_id=plan_id, trade_date=day)

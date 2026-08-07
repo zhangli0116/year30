@@ -110,7 +110,7 @@ export function averageMarkLine() {
   return {
     symbol: 'none',
     lineStyle: { color: '#c0c4cc', type: 'dashed', width: 1 },
-    label: { color: '#909399', fontSize: 11, formatter: '平均 {c}' },
+    label: { color: '#909399', fontSize: 11, formatter: (p) => '平均 ' + fmtNum(p.value) },
     data: [{ type: 'average', name: '平均' }],
   }
 }
