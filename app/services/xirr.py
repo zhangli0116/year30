@@ -13,6 +13,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app import models
+from app.services import prices as price_svc
 
 
 def xnpv(rate: float, flows: list[tuple[date, float]]) -> float:
@@ -130,14 +131,10 @@ def twr_plan(db: Session, plan_id: int, today: date | None = None) -> dict | Non
     if not purchases:
         return None
     fund_ids = {p.fund_id for p in purchases}
-    # 每只基金价格序列 [(date, close)] 升序
+    # 每只基金价格序列 [(date, close/单位净值)] 升序（按 fund_type 取 fund_price 或 fund_nav）
     price_series: dict[int, list] = {}
     for fid in fund_ids:
-        price_series[fid] = db.execute(
-            select(models.FundPrice.trade_date, models.FundPrice.close_price)
-            .where(models.FundPrice.fund_id == fid)
-            .order_by(models.FundPrice.trade_date)
-        ).all()
+        price_series[fid] = price_svc.series(db, fid, date.min, date.max)
     # 当日未收盘 / 获取不到收盘价：用实时价补"今日虚拟收盘"，使今日权益按实时价计
     fund_codes = dict(
         db.execute(
@@ -216,45 +213,48 @@ def twr_plan(db: Session, plan_id: int, today: date | None = None) -> dict | Non
 
 
 def _price_map(db: Session, codes: list[str]) -> dict[str, float]:
-    """批量现价：优先当前数据源的实时行情，缺失/失败回退最新历史收盘价。"""
+    """批量现价：etf 走 etf 组数据源的实时行情；otc 无实时盘口，直接回退最新净值。
+
+    全部未取到的最新价回退：按 fund_type 读 fund_price 收盘价或 fund_nav 单位净值。
+    """
     from app.services import datasource
+    from app.services.price import FUND_TYPE_OTC
 
     prices: dict[str, float] = {}
-    try:
-        provider = datasource.get_provider(db)
-        symbol_map = datasource.resolve_symbols(db, codes)
-        symbols = [symbol_map[c] for c in codes if c in symbol_map]
-        quotes = provider.fetch_quotes(symbols)
-        for q in quotes:
-            if q.get("last") is not None:
-                prices[q["code"]] = float(q["last"])
-    except Exception:  # noqa: BLE001
-        quotes = []
-    missing = [c for c in codes if c not in prices]
-    if missing:
-        # 基金 id -> 代码，用于回退查询最新收盘价
+    # 解析每个 code 的 fund_type（可能混合；未知默认按 etf 处理）
+    code_types = dict(
+        db.execute(
+            select(models.Fund.fund_code, models.Fund.fund_type).where(
+                models.Fund.fund_code.in_(codes)
+            )
+        ).all()
+    )
+    etf_codes = [c for c in codes if code_types.get(c) != FUND_TYPE_OTC]
+    if etf_codes:
+        try:
+            provider = datasource.get_provider(db, "etf")
+            symbol_map = datasource.resolve_symbols(db, etf_codes)
+            symbols = [symbol_map[c] for c in etf_codes if c in symbol_map]
+            quotes = provider.fetch_quotes(symbols)
+            for q in quotes:
+                if q.get("last") is not None:
+                    prices[q["code"]] = float(q["last"])
+        except Exception:  # noqa: BLE001
+            pass
+    fallback = [c for c in codes if c not in prices]
+    if fallback:
+        # 基金 id -> 代码，用于回退查询最新价格（按类型读 fund_price 或 fund_nav）
         fund_codes = dict(
             db.execute(
                 select(models.Fund.id, models.Fund.fund_code).where(
-                    models.Fund.fund_code.in_(missing)
+                    models.Fund.fund_code.in_(fallback)
                 )
             ).all()
         )
-        fund_prices = db.execute(
-            select(models.FundPrice.fund_id, models.FundPrice.trade_date, models.FundPrice.close_price)
-            .where(models.FundPrice.fund_id.in_(fund_codes.keys()))
-            .order_by(models.FundPrice.trade_date)
-        ).all()
-        best: dict[int, tuple[date, float]] = {}
-        for fid, td, close in fund_prices:
-            if close is None:
-                continue
-            if fid not in best or td > best[fid][0]:
-                best[fid] = (td, float(close))
-        for fid, (_, close) in best.items():
-            code = fund_codes.get(fid)
-            if code:
-                prices[code] = close
+        for fid, code in fund_codes.items():
+            close = price_svc.latest(db, fid)
+            if close is not None:
+                prices[code] = float(close)
     return prices
 
 

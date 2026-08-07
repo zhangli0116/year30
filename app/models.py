@@ -88,6 +88,9 @@ class Fund(Base):
     fund_code: Mapped[str] = mapped_column(String(10), unique=True, nullable=False, comment="基金代码")
     fund_name: Mapped[str] = mapped_column(String(64), nullable=False, comment="基金名称")
     exchange: Mapped[str] = mapped_column(String(16), nullable=False, default="上交所", comment="交易所")
+    fund_type: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="etf", comment="标的类型：etf=场内(ETF/LOF，K线) / otc=场外基金(净值)"
+    )
     currency: Mapped[str] = mapped_column(String(3), nullable=False, default="CNY", comment="币种")
     created_at: Mapped[datetime] = mapped_column(
         DateTime, nullable=False, server_default=func.now(), comment="创建时间"
@@ -174,6 +177,32 @@ class FundPrice(Base):
     close_price: Mapped[Decimal] = mapped_column(Numeric(10, 4), nullable=False, comment="收盘价")
     volume: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True, comment="成交量")
     source: Mapped[str] = mapped_column(String(16), nullable=False, default="tencent", comment="数据源")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, server_default=func.now(), comment="记录创建时间"
+    )
+
+    fund: Mapped[Fund] = relationship()
+
+
+class FundNav(Base):
+    """场外基金每日净值（单位净值/累计净值），对应 fund_nav 表。
+
+    与 fund_price（交易所 OHLC）分开存储：场外基金无盘口/无 OHLC。
+    """
+
+    __tablename__ = "fund_nav"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    fund_id: Mapped[int] = mapped_column(
+        ForeignKey("fund.id", onupdate="CASCADE", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+        comment="基金ID",
+    )
+    trade_date: Mapped[date] = mapped_column(Date, nullable=False, comment="净值日期")
+    unit_nav: Mapped[Decimal] = mapped_column(Numeric(10, 4), nullable=False, comment="单位净值")
+    accum_nav: Mapped[Optional[Decimal]] = mapped_column(Numeric(10, 4), nullable=True, comment="累计净值")
+    source: Mapped[str] = mapped_column(String(16), nullable=False, default="eastmoney", comment="数据源")
     created_at: Mapped[datetime] = mapped_column(
         DateTime, nullable=False, server_default=func.now(), comment="记录创建时间"
     )

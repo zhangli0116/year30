@@ -147,6 +147,7 @@ class FundBase(BaseModel):
     fund_code: str = Field(..., min_length=1, max_length=10, description="基金代码")
     fund_name: str = Field(..., min_length=1, max_length=64, description="基金名称")
     exchange: str = Field("上交所", max_length=16, description="交易所")
+    fund_type: str = Field("etf", max_length=16, description="标的类型：etf=场内(ETF/LOF，K线) / otc=场外基金(净值)")
     currency: str = Field("CNY", max_length=3, description="币种")
 
 
@@ -158,6 +159,7 @@ class FundUpdate(BaseModel):
     fund_code: Optional[str] = Field(None, min_length=1, max_length=10, description="基金代码")
     fund_name: Optional[str] = Field(None, min_length=1, max_length=64, description="基金名称")
     exchange: Optional[str] = Field(None, max_length=16, description="交易所")
+    fund_type: Optional[str] = Field(None, max_length=16, description="标的类型：etf / otc")
     currency: Optional[str] = Field(None, max_length=3, description="币种")
 
 
@@ -637,19 +639,31 @@ class BacktestOut(BaseModel):
 
 
 # =========================================================
-# 数据源（当前数据源切换）
+# 数据源（按 fund_type 分别配置）
 # =========================================================
 
 
 class DataSourceProvider(BaseModel):
     name: str
     label: str
+    fund_types: list[str] = Field(default_factory=list)
+
+
+class DataSourceType(BaseModel):
+    """某 fund_type（etf/otc）的数据源配置组。"""
+
+    fund_type: str
+    label: str
+    options: list[DataSourceProvider] = Field(default_factory=list)
+    current: str = ""
 
 
 class DataSourceOut(BaseModel):
-    providers: list[DataSourceProvider] = Field(default_factory=list)
-    current: str = "tencent"
+    types: list[DataSourceType] = Field(default_factory=list)
 
 
 class DataSourceUpdate(BaseModel):
-    provider: str = Field(..., description="数据源名称，如 tencent / sina")
+    fund_type: str = Field(..., description="标的类型：etf / otc")
+    provider: str = Field(
+        ..., description="数据源名称，如 tencent / sina / eastmoney / akshare"
+    )

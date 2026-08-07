@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session
 from app import crud, models
 from app.logger import logger
 from app.services import datasource
+from app.services.price import FUND_TYPE_OTC
 
 CASH_CODE = "000000"
 
@@ -27,7 +28,6 @@ def sync_all(db: Session) -> dict:
     起点：该基金在该方案下最早购买日（无购买则跳过）；现金流起点：该方案最早季度开始日。
     """
     today = date.today()
-    provider = datasource.get_provider(db)  # 跟随「当前数据源」（设置页切换）
 
     plans = [p for p in crud.plan.list_plans(db) if p.active]
     if not plans:
@@ -85,9 +85,15 @@ def sync_all(db: Session) -> dict:
                 continue
             seen_funds.add(fund.id)
             try:
-                symbol = datasource.fund_symbol(fund.exchange, fund.fund_code)
-                bars = provider.fetch_daily(symbol, start, today)
-                inserted, _existing = crud.price.upsert_bars(db, fund.id, bars, provider.name)
+                # 按 fund_type 取该组数据源（设置页按类型分别配置）
+                provider = datasource.get_provider(db, fund.fund_type)
+                if fund.fund_type == FUND_TYPE_OTC:
+                    navs = provider.fetch_nav(fund.fund_code, start, today)
+                    inserted, _existing = crud.nav.upsert_navs(db, fund.id, navs, provider.name)
+                else:
+                    symbol = datasource.fund_symbol(fund.exchange, fund.fund_code)
+                    bars = provider.fetch_daily(symbol, start, today)
+                    inserted, _existing = crud.price.upsert_bars(db, fund.id, bars, provider.name)
                 prices_inserted += inserted
                 # 重算 [start, today] 权益流水（含已存在行，避免新增购买后旧行过期）
                 holdings_generated += crud.holding.generate(

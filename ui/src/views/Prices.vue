@@ -42,8 +42,8 @@
         </div>
       </template>
 
-      <!-- 行情概要条 -->
-      <div v-if="quote" class="quote-bar">
+      <!-- 行情概要条（场外基金无实时行情，隐藏） -->
+      <div v-if="quote && !isOtc" class="quote-bar">
         <div class="qb-name">{{ fundLabel }}<span class="qb-code">{{ fundCode }}</span></div>
         <div class="qb-price" :class="isUp ? 'up' : 'down'">{{ fmtPrice(quote.last) }}</div>
         <div class="qb-change" :class="isUp ? 'up' : 'down'">
@@ -65,8 +65,8 @@
           </div>
         </div>
 
-        <!-- 右侧五档盘口 -->
-        <div class="quote-panel" v-if="quote">
+        <!-- 右侧五档盘口（场外基金无盘口，隐藏） -->
+        <div class="quote-panel" v-if="quote && !isOtc">
           <div class="qp-title">五档盘口</div>
           <div class="qp-group sell">
             <div
@@ -163,9 +163,17 @@ import { datasourceApi, fundsApi, pricesApi, quotesApi } from '../api'
 
 const fundOptions = ref([])
 const fundId = ref(null)
-// 当前数据源（设置页全局切换，同步跟随）
-const currentSourceName = ref('tencent')
-const currentSourceLabel = ref('腾讯行情')
+// 数据源配置（设置页按 fund_type 分别配置）；当前基金类型对应的数据源动态取
+const dsTypes = ref([])
+const currentTypeConfig = computed(() => {
+  const ft = fundOptions.value.find((f) => f.id === fundId.value)?.fund_type || 'etf'
+  return dsTypes.value.find((t) => t.fund_type === ft)
+})
+const currentSourceName = computed(() => currentTypeConfig.value?.current || 'tencent')
+const currentSourceLabel = computed(() => {
+  const t = currentTypeConfig.value
+  return (t?.options || []).find((p) => p.name === t?.current)?.label || t?.current || '腾讯行情'
+})
 const startDate = ref('')
 const endDate = ref('')
 const syncing = ref(false)
@@ -183,6 +191,10 @@ const fundLabel = computed(
 )
 const fundCode = computed(
   () => fundOptions.value.find((f) => f.id === fundId.value)?.fund_code || ''
+)
+// 场外基金：无 OHLC/五档盘口，价格页改用单位净值折线
+const isOtc = computed(
+  () => fundOptions.value.find((f) => f.id === fundId.value)?.fund_type === 'otc'
 )
 const isUp = computed(() => (quote.value ? (quote.value.change_pct ?? 0) >= 0 : true))
 const maxVol = computed(() => {
@@ -234,8 +246,12 @@ async function loadKline() {
   }
 }
 
-// 拉取实时五档（含买卖挂单量）
+// 拉取实时五档（含买卖挂单量）；场外基金无盘口，跳过
 async function loadQuote() {
+  if (isOtc.value) {
+    quote.value = null
+    return
+  }
   const fund = fundOptions.value.find((f) => f.id === fundId.value)
   if (!fund) return
   try {
@@ -275,9 +291,15 @@ function onFundChange() {
 }
 
 const sourceLabel = computed(() => currentSourceLabel.value)
-const sourceTip = computed(() =>
-  currentSourceName.value === 'sina' ? '新浪日线仅支持最近约 4 年，更早历史需切回腾讯同步' : ''
-)
+const sourceTip = computed(() => {
+  const name = currentSourceName.value
+  if (name === 'akshare')
+    return 'AKShare 非官方数据源，有 1~2s 限流与重试，实时行情较慢'
+  if (isOtc.value) return '场外基金无 K 线/盘口，仅同步净值'
+  if (name === 'sina')
+    return '新浪日线仅支持最近约 4 年，更早历史需切换其他数据源同步'
+  return ''
+})
 
 // 先检查缺失时间段 → 弹窗确认 → 确认后才实际同步
 async function doSync() {
@@ -337,6 +359,60 @@ function render() {
   if (!chartEl.value) return
   if (!chart) chart = echarts.init(chartEl.value)
   const dates = bars.value.map((b) => b.trade_date)
+  // 数据源变化（换基金/改日期区间）→ 重置缩放；仅刷新（如同步后重绘）→ 保留用户缩放
+  const key = `${fundId.value}|${startDate.value}|${endDate.value}`
+  const forceReset = key !== lastRenderKey || bars.value.length === 0
+  lastRenderKey = key
+  let zoomStart = 0
+  let zoomEnd = 100
+  if (!forceReset) {
+    const cur = chart.getOption().dataZoom
+    const dz = Array.isArray(cur) ? cur[0] : cur
+    if (dz && typeof dz.start === 'number' && typeof dz.end === 'number') {
+      zoomStart = dz.start
+      zoomEnd = dz.end
+    }
+  }
+
+  // 场外基金：无 OHLC，绘单位净值折线
+  if (isOtc.value) {
+    const navData = bars.value.map((b) => Number(b.close_price))
+    chart.setOption(
+      {
+        tooltip: { trigger: 'axis' },
+        legend: { data: ['单位净值'], top: 0, left: 'center' },
+        grid: [{ left: 70, right: 20, top: 40, bottom: 60 }],
+        xAxis: [
+          {
+            type: 'category',
+            data: dates,
+            boundaryGap: false,
+            axisLabel: { fontSize: 11, hideOverlap: true },
+          },
+        ],
+        yAxis: [{ type: 'value', scale: true }],
+        dataZoom: [
+          { type: 'inside', xAxisIndex: 0, start: zoomStart, end: zoomEnd },
+          { type: 'slider', xAxisIndex: 0, start: zoomStart, end: zoomEnd, height: 20 },
+        ],
+        series: [
+          {
+            name: '单位净值',
+            type: 'line',
+            data: navData,
+            smooth: true,
+            showSymbol: false,
+            lineStyle: { width: 2, color: '#409eff' },
+            itemStyle: { color: '#409eff' },
+            areaStyle: { opacity: 0.08 },
+          },
+        ],
+      },
+      forceReset
+    )
+    return
+  }
+
   // ECharts candlestick 数据格式：[open, close, low, high]
   const data = []
   const volData = []
@@ -358,20 +434,6 @@ function render() {
       itemStyle: { color: c >= o ? '#f56c6c' : '#67c23a' },
     })
   })
-  // 数据源变化（换基金/改日期区间）→ 重置缩放；仅刷新（如同步后重绘）→ 保留用户缩放
-  const key = `${fundId.value}|${startDate.value}|${endDate.value}`
-  const forceReset = key !== lastRenderKey || bars.value.length === 0
-  lastRenderKey = key
-  let zoomStart = 0
-  let zoomEnd = 100
-  if (!forceReset) {
-    const cur = chart.getOption().dataZoom
-    const dz = Array.isArray(cur) ? cur[0] : cur
-    if (dz && typeof dz.start === 'number' && typeof dz.end === 'number') {
-      zoomStart = dz.start
-      zoomEnd = dz.end
-    }
-  }
   chart.setOption(
     {
       tooltip: { trigger: 'axis', axisPointer: { type: 'cross' } },
@@ -451,9 +513,7 @@ onMounted(async () => {
     ])
     const real = (fundData.items || []).filter((f) => f.fund_code !== '000000')
     fundOptions.value = real
-    currentSourceName.value = ds.current || 'tencent'
-    const p = (ds.providers || []).find((x) => x.name === currentSourceName.value)
-    currentSourceLabel.value = p ? p.label : currentSourceName.value
+    dsTypes.value = ds.types || []
     if (real.length) fundId.value = real[0].id
     const [sd, ed] = defaultRange()
     startDate.value = sd

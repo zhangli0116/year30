@@ -19,6 +19,10 @@ from datetime import date, datetime, timedelta
 
 from app.logger import logger
 
+# 标的类型：etf=场内(ETF/LOF，交易所K线+盘口) / otc=场外基金(只有净值)
+FUND_TYPE_ETF = "etf"
+FUND_TYPE_OTC = "otc"
+
 # 日线数据：一天一根 K 线（OHLC + 成交量）
 @dataclass
 class DailyBar:
@@ -30,11 +34,21 @@ class DailyBar:
     volume: int | None = None
 
 
+# 场外基金净值：一天一个单位净值（+累计净值），无 OHLC
+@dataclass
+class NavBar:
+    trade_date: date
+    unit_nav: float | None = None
+    accum_nav: float | None = None
+
+
 class DataProvider(ABC):
-    """统一数据源抽象：历史日线 + 实时行情。"""
+    """统一数据源抽象：历史日线 + 实时行情（+ 场外净值）。"""
 
     name: str = "base"
     label: str = "默认数据源"
+    # 该数据源可服务的 fund_type（etf / otc）。空 = 不限制。
+    fund_types: tuple[str, ...] = ()
 
     @abstractmethod
     def fetch_daily(self, symbol: str, start: date, end: date) -> list[DailyBar]:
@@ -45,6 +59,10 @@ class DataProvider(ABC):
         """实时行情（含五档盘口）。标准键：
         code/name/last/price/prev_close/change/change_pct/bid[5]/ask[5]/bid_vol[5]/ask_vol[5]/time"""
 
+    def fetch_nav(self, code: str, start: date, end: date) -> list[NavBar]:
+        """场外基金净值（otc 数据源实现）；etf 数据源抛 NotImplementedError。"""
+        raise NotImplementedError(f"数据源[{self.name}]不支持场外基金净值")
+
     def __str__(self) -> str:
         return f"{self.name}({self.label})"
 
@@ -54,6 +72,7 @@ class TencentProvider(DataProvider):
 
     name = "tencent"
     label = "腾讯行情"
+    fund_types = (FUND_TYPE_ETF,)
     _KLINE_URL = "https://web.ifzq.gtimg.cn/appstock/app/fqkline/get"
     _KLINE_COUNT = 2000  # 单次最大条数（实测 count>2000 返回 param error）
     _QUOTE_URL = "https://qt.gtimg.cn/q={symbols}"

@@ -28,6 +28,7 @@ class SinaProvider(DataProvider):
 
     name = "sina"
     label = "新浪行情"
+    fund_types = ("etf",)
     _QUOTE_URL = "https://hq.sinajs.cn/list={symbols}"
     _DAILY_URL = (
         "https://quotes.sina.cn/cn/api/jsonp_v2.php/var%20_=kl/"

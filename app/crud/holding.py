@@ -5,6 +5,8 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app import models
+from app.services import prices as price_svc
+from app.services.price import FUND_TYPE_ETF, FUND_TYPE_OTC
 
 HANDS = 100  # 每手份数
 
@@ -16,8 +18,11 @@ def _realtime_price(db: Session, fund_id: int) -> Decimal | None:
     fund = db.get(models.Fund, fund_id)
     if fund is None:
         return None
+    if getattr(fund, "fund_type", "etf") == FUND_TYPE_OTC:
+        # 场外基金无实时盘口，用最新净值兜底
+        return price_svc.latest(db, fund_id)
     try:
-        provider = datasource.get_provider(db)
+        provider = datasource.get_provider(db, FUND_TYPE_ETF)
         symbol = datasource.fund_symbol(fund.exchange, fund.fund_code)
         for q in provider.fetch_quotes([symbol]):
             if q.get("last") is not None:
@@ -53,17 +58,7 @@ def generate(
             .order_by(models.PurchaseRecord.purchase_date)
         ).all()
     )
-    prices = list(
-        db.scalars(
-            select(models.FundPrice)
-            .where(
-                models.FundPrice.fund_id == fund_id,
-                models.FundPrice.trade_date >= start_date,
-                models.FundPrice.trade_date <= end_date,
-            )
-            .order_by(models.FundPrice.trade_date)
-        ).all()
-    )
+    prices = price_svc.series(db, fund_id, start_date, end_date)  # [(trade_date, price)]
     if not purchases and not prices:
         return 0
 
@@ -81,23 +76,22 @@ def generate(
     p_idx = 0
     count = 0
     has_end_bar = False
-    for bar in prices:
-        while p_idx < len(purchases) and purchases[p_idx].purchase_date <= bar.trade_date:
+    for td, price in prices:
+        while p_idx < len(purchases) and purchases[p_idx].purchase_date <= td:
             rec = purchases[p_idx]
             sign = -1 if rec.type == "sell" else 1
             cum_shares += sign * rec.hands * rec.shares_per_hand
             p_idx += 1
-        if bar.trade_date == end_date:
+        if td == end_date:
             has_end_bar = True
         total_shares = max(0, cum_shares)
         total_hands = total_shares // HANDS
-        price = bar.close_price
         equity = (Decimal(total_shares) * price).quantize(Decimal("0.01"))
 
-        row = existing.get(bar.trade_date)
+        row = existing.get(td)
         if row is None:
             row = models.FundHoldingDaily(
-                plan_id=plan_id, fund_id=fund_id, trade_date=bar.trade_date
+                plan_id=plan_id, fund_id=fund_id, trade_date=td
             )
             db.add(row)
         row.total_shares = total_shares
@@ -163,16 +157,12 @@ def check_missing(
     start_date: date,
     end_date: date,
 ) -> tuple[int, date | None, date | None]:
-    """该区间内缺失的交易日：有历史价(fund_price)但无权益流水(holding)的天数。"""
-    price_dates = set(
-        db.scalars(
-            select(models.FundPrice.trade_date).where(
-                models.FundPrice.fund_id == fund_id,
-                models.FundPrice.trade_date >= start_date,
-                models.FundPrice.trade_date <= end_date,
-            )
-        ).all()
-    )
+    """该区间内缺失的交易日：有历史价(收盘价/单位净值)但无权益流水(holding)的天数。"""
+    price_dates = {
+        d
+        for d in price_svc.existing_dates(db, fund_id)
+        if start_date <= d <= end_date
+    }
     holding_dates = set(
         db.scalars(
             select(models.FundHoldingDaily.trade_date).where(

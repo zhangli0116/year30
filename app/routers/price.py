@@ -7,7 +7,8 @@ from app import crud, models, schemas
 from app.database import get_db
 from app.logger import logger
 from app.schemas import ApiResponse, error, success
-from app.services import datasource
+from app.services import datasource, prices as price_svc
+from app.services.price import FUND_TYPE_OTC
 
 router = APIRouter(prefix="/api/v1/prices", tags=["prices"])
 
@@ -44,6 +45,27 @@ def get_prices(
     end_date: date = Query(..., description="结束日期"),
     db: Session = Depends(get_db),
 ) -> ApiResponse:
+    fund = db.get(models.Fund, fund_id)
+    if fund is None:
+        return error(40400, f"基金 {fund_id} 不存在")
+    if fund.fund_type == FUND_TYPE_OTC:
+        # 场外基金无 OHLC，把净值映射为 PriceBarOut（close=单位净值，其余空）
+        rows = crud.nav.list_navs(db, fund_id, start_date, end_date)
+        return success(
+            [
+                schemas.PriceBarOut(
+                    fund_id=r.fund_id,
+                    trade_date=r.trade_date,
+                    open_price=None,
+                    high_price=None,
+                    low_price=None,
+                    close_price=r.unit_nav,
+                    volume=None,
+                    source=r.source,
+                )
+                for r in rows
+            ]
+        )
     return success(crud.price.list_prices(db, fund_id, start_date, end_date))
 
 
@@ -55,7 +77,7 @@ def check_missing(
     fund = db.get(models.Fund, payload.fund_id)
     if fund is None:
         return error(40400, f"基金 {payload.fund_id} 不存在")
-    existing = crud.price.existing_dates(db, payload.fund_id)
+    existing = price_svc.existing_dates(db, payload.fund_id)
     segments = _missing_segments(existing, payload.start_date, payload.end_date)
     missing_days = sum((e - s).days + 1 for s, e in segments)
     logger.info(f"检查缺失价格：基金{fund.fund_code} {payload.start_date}~{payload.end_date}，缺失{missing_days}天/{len(segments)}段")
@@ -81,22 +103,32 @@ def sync_prices(
     fund = db.get(models.Fund, payload.fund_id)
     if fund is None:
         return error(40400, f"基金 {payload.fund_id} 不存在")
-    if payload.source:
-        provider = datasource.get_provider_by_name(payload.source)
-        if provider is None:
-            return error(40006, f"未知数据源：{payload.source}")
-    else:
-        provider = datasource.get_provider(db)
 
     try:
-        symbol = datasource.fund_symbol(fund.exchange, fund.fund_code)
-        bars = provider.fetch_daily(symbol, payload.start_date, payload.end_date)
+        if fund.fund_type == FUND_TYPE_OTC:
+            # 场外基金：无 K 线/盘口，取 otc 组数据源（东财/akshare），走 fetch_nav
+            provider = datasource.get_provider(db, fund.fund_type)
+            bars = provider.fetch_nav(fund.fund_code, payload.start_date, payload.end_date)
+            inserted, existing = crud.nav.upsert_navs(
+                db, payload.fund_id, bars, provider.name
+            )
+        else:
+            if payload.source:
+                provider = datasource.get_provider_by_name(payload.source)
+                if provider is None or fund.fund_type not in provider.fund_types:
+                    return error(
+                        40006, f"未知数据源或不支持该标的类型：{payload.source}"
+                    )
+            else:
+                provider = datasource.get_provider(db, fund.fund_type)
+            symbol = datasource.fund_symbol(fund.exchange, fund.fund_code)
+            bars = provider.fetch_daily(symbol, payload.start_date, payload.end_date)
+            inserted, existing = crud.price.upsert_bars(
+                db, payload.fund_id, bars, provider.name
+            )
     except Exception as e:  # noqa: BLE001
         logger.error(f"同步价格失败：基金{fund.fund_code} 数据源{provider.name}：{e}")
         return error(50001, f"数据源拉取失败：{e}")
-    inserted, existing = crud.price.upsert_bars(
-        db, payload.fund_id, bars, provider.name
-    )
     logger.info(f"同步价格：基金{fund.fund_code} {payload.start_date}~{payload.end_date}，数据源{provider.name} 拉取{len(bars)} 新增{inserted} 已有{existing}")
     return success(
         schemas.PriceSyncOut(

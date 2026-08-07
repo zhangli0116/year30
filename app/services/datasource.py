@@ -1,8 +1,13 @@
-"""数据源注册表 + 「当前数据源」管理 + fund→symbol 解析。
+"""数据源注册表 + 按 fund_type 的「当前数据源」管理 + fund→symbol 解析。
 
-所有外部取数（实时行情 / 历史日线 / 基准指数 / 每日自动同步 / XIRR·再平衡实时价）
-统一走 `get_provider(db)` 获取当前数据源。切换通过 `GET/PUT /api/v1/datasource`，
-持久化到 `app_setting`（键 `datasource.provider`）。
+所有外部取数（实时行情 / 历史日线 / 场外净值 / 基准指数 / 每日自动同步 / XIRR·再平衡实时价）
+统一走 `get_provider(db, fund_type)` 获取该标的类型对应的数据源。
+
+配置按 fund_type 分别存储（app_setting 键 `datasource.provider.{fund_type}`）：
+    - etf（场内）：腾讯 / 新浪 / AKShare
+    - otc（场外）：东财净值 / AKShare
+切换通过 `GET/PUT /api/v1/datasource`，body 为 `{fund_type, provider}`。
+兼容旧键 `datasource.provider`（etf 类型未设新键时回退读取）。
 """
 from __future__ import annotations
 
@@ -10,47 +15,108 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app import crud, models
-from app.services.price import DataProvider, TencentProvider
+from app.services.price import (
+    FUND_TYPE_ETF,
+    FUND_TYPE_OTC,
+    DataProvider,
+    TencentProvider,
+)
 
-KEY_PROVIDER = "datasource.provider"
-DEFAULT_PROVIDER = "tencent"
+KEY_PROVIDER = "datasource.provider"  # 旧全局键（仅兼容 etf 读取）
+KEY_PROVIDER_PREFIX = "datasource.provider."
+
+# 各 fund_type 的展示名（设置页分组标题）
+FUND_TYPE_LABELS = {
+    FUND_TYPE_ETF: "场内基金 (ETF/LOF)",
+    FUND_TYPE_OTC: "场外基金",
+}
+
+# 各 fund_type 默认数据源（未配置/值非法时回退）
+DEFAULT_PROVIDER = {
+    FUND_TYPE_ETF: "tencent",
+    FUND_TYPE_OTC: "eastmoney",
+}
 
 
 def _registry() -> dict[str, DataProvider]:
-    """懒构造避免循环导入：price 不依赖本模块，sina 依赖 price。"""
+    """懒构造避免循环导入：price 不依赖本模块，sina/eastmoney/akshare 依赖 price。"""
+    from app.services.akshare import AkShareProvider
+    from app.services.eastmoney import EastMoneyNavProvider
     from app.services.sina import SinaProvider
 
     return {
         "tencent": TencentProvider(),
         "sina": SinaProvider(),
+        "eastmoney": EastMoneyNavProvider(),
+        "akshare": AkShareProvider(),
     }
 
 
 def list_providers() -> list[dict]:
-    return [{"name": name, "label": p.label} for name, p in _registry().items()]
+    return [
+        {"name": name, "label": p.label, "fund_types": list(p.fund_types)}
+        for name, p in _registry().items()
+    ]
 
 
 def get_provider_by_name(name: str) -> DataProvider | None:
     return _registry().get(name)
 
 
-def get_provider(db: Session | None = None) -> DataProvider:
-    """读取「当前数据源」；无 db 或未设置/值非法时回退默认。"""
-    name = DEFAULT_PROVIDER
-    if db is not None:
-        stored = crud.app_setting.get_setting(db, KEY_PROVIDER)
-        if stored in _registry():
-            name = stored
-    return _registry()[name]
+def _provider_key(fund_type: str) -> str:
+    return f"{KEY_PROVIDER_PREFIX}{fund_type}"
 
 
-def set_provider(db: Session, name: str) -> DataProvider:
-    """设置「当前数据源」，返回该 Provider；未知数据源抛 ValueError。"""
+def get_provider(db: Session | None = None, fund_type: str | None = None) -> DataProvider:
+    """读取指定 fund_type 的当前数据源；无 db/未设置/值非法时回退该类型默认。
+
+    fund_type=None → 默认 etf（兼容旧调用）。etf 类型兼容旧键 `datasource.provider`。
+    """
     registry = _registry()
+    ft = fund_type or FUND_TYPE_ETF
+    if ft not in DEFAULT_PROVIDER:
+        ft = FUND_TYPE_ETF
+    name = None
+    if db is not None:
+        name = crud.app_setting.get_setting(db, _provider_key(ft))
+        if name is None and ft == FUND_TYPE_ETF:
+            name = crud.app_setting.get_setting(db, KEY_PROVIDER)  # 兼容旧键
+    if not (name and name in registry and ft in registry[name].fund_types):
+        name = DEFAULT_PROVIDER[ft]
+    return registry[name]
+
+
+def set_provider(db: Session, fund_type: str, name: str) -> DataProvider:
+    """设置某 fund_type 的当前数据源；未知数据源/类型不匹配抛 ValueError。"""
+    registry = _registry()
+    ft = fund_type or FUND_TYPE_ETF
     if name not in registry:
         raise ValueError(f"未知数据源：{name}")
-    crud.app_setting.set_setting(db, KEY_PROVIDER, name)
+    if ft not in registry[name].fund_types:
+        raise ValueError(f"数据源 {name} 不支持标的类型 {ft}")
+    crud.app_setting.set_setting(db, _provider_key(ft), name)
     return registry[name]
+
+
+def list_type_configs(db: Session) -> list[dict]:
+    """设置页展示：按 fund_type 分组，各组可选数据源 + 当前值。"""
+    registry = _registry()
+    out: list[dict] = []
+    for ft, label in FUND_TYPE_LABELS.items():
+        options = [
+            {"name": n, "label": p.label, "fund_types": list(p.fund_types)}
+            for n, p in registry.items()
+            if ft in p.fund_types
+        ]
+        out.append(
+            {
+                "fund_type": ft,
+                "label": label,
+                "options": options,
+                "current": get_provider(db, ft).name,
+            }
+        )
+    return out
 
 
 # ---- fund → symbol 解析（完整行情代码）----

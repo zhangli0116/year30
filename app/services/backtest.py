@@ -21,6 +21,7 @@ from sqlalchemy.orm import Session
 
 from app import models
 from app.crud.purchase import MIN_FEE, _calc_fee
+from app.services import prices as price_svc
 from app.services.rebalance import get_params, judge, threshold_for
 from app.services.xirr import xirr
 
@@ -85,16 +86,8 @@ def run_backtest(
     price_map: dict[int, dict[date, Decimal]] = {}
     all_dates: set[date] = set()
     for f in funds:
-        rows = db.execute(
-            select(models.FundPrice.trade_date, models.FundPrice.close_price)
-            .where(
-                models.FundPrice.fund_id == f["fund_id"],
-                models.FundPrice.trade_date >= start_date,
-                models.FundPrice.trade_date <= today,
-            )
-            .order_by(models.FundPrice.trade_date)
-        ).all()
-        pd = {td: Decimal(str(close)) for td, close in rows if close is not None}
+        # 按 fund_type 取 fund_price 收盘价或 fund_nav 单位净值
+        pd = {td: price for td, price in price_svc.series(db, f["fund_id"], start_date, today)}
         if not pd:
             warnings.append(f"基金 {f['fund_code']} 在区间内无历史价，无法参与回测")
         price_map[f["fund_id"]] = pd
@@ -573,11 +566,7 @@ def run_coverage(
     for fid, code, name in fund_rows:
         if code == "000000":
             continue
-        dates = set(
-            db.scalars(
-                select(models.FundPrice.trade_date).where(models.FundPrice.fund_id == fid)
-            ).all()
-        )
+        dates = price_svc.existing_dates(db, fid)
         raw.append(_raw_item("fund", fid, code, name, dates))
     for symbol in (benchmark_symbols or []):
         bm = crud.benchmark.get_by_symbol(db, symbol)

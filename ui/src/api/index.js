@@ -143,8 +143,8 @@ export const benchmarksApi = {
 }
 
 export const datasourceApi = {
-  // GET /api/v1/datasource → {providers:[{name,label}], current}
+  // GET /api/v1/datasource → {types:[{fund_type,label,options,current}]}
   get: () => request.get('/datasource'),
-  // PUT /api/v1/datasource {provider} → 切换当前数据源（持久化）
+  // PUT /api/v1/datasource {fund_type, provider} → 设置该标的类型的数据源（持久化）
   set: (data) => request.put('/datasource', data),
 }

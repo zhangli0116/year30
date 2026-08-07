@@ -23,6 +23,13 @@
       <el-table-column prop="fund_code" label="代码" width="120" />
       <el-table-column prop="fund_name" label="名称" min-width="140" />
       <el-table-column prop="exchange" label="交易所" width="100" />
+      <el-table-column label="类型" width="100">
+        <template #default="{ row }">
+          <el-tag size="small" :type="row.fund_type === 'otc' ? 'warning' : 'primary'" effect="plain">
+            {{ fundTypeText(row.fund_type) }}
+          </el-tag>
+        </template>
+      </el-table-column>
       <el-table-column prop="currency" label="币种" width="80" />
       <el-table-column label="操作" width="160">
         <template #default="{ row }">
@@ -53,6 +60,12 @@
           <el-select v-model="form.exchange">
             <el-option label="上交所" value="上交所" />
             <el-option label="深交所" value="深交所" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="标的类型" prop="fund_type">
+          <el-select v-model="form.fund_type">
+            <el-option label="场内ETF / LOF（K线行情）" value="etf" />
+            <el-option label="场外基金（净值）" value="otc" />
           </el-select>
         </el-form-item>
         <el-form-item label="币种">
@@ -255,8 +268,13 @@ const form = reactive({
   fund_code: '',
   fund_name: '',
   exchange: '上交所',
+  fund_type: 'etf',
   currency: 'CNY',
 })
+
+function fundTypeText(v) {
+  return { etf: '场内ETF', otc: '场外基金' }[v] || v || '场内ETF'
+}
 
 // ---- 定投方案管理 ----
 const plans = ref([])
@@ -335,6 +353,7 @@ function openCreate() {
     fund_code: '',
     fund_name: '',
     exchange: '上交所',
+    fund_type: 'etf',
     currency: 'CNY',
   })
   isEdit.value = false
@@ -347,6 +366,7 @@ function openEdit(row) {
     fund_code: row.fund_code,
     fund_name: row.fund_name,
     exchange: row.exchange,
+    fund_type: row.fund_type || 'etf',
     currency: row.currency,
   })
   isEdit.value = true

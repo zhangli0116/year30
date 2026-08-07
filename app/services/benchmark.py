@@ -13,7 +13,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app import crud, models
-from app.services import datasource
+from app.services import datasource, prices as price_svc
 
 DEFAULT_BENCHMARKS = [
     {"symbol": "sh000300", "name": "沪深300", "fund_code": None},
@@ -54,7 +54,8 @@ def sync(
         rows = _proxy_rows(db, benchmark.fund_id, start, end)
         fetched = len(rows)
     else:
-        provider = datasource.get_provider(db)
+        # 指数属交易所行情，走 etf 组数据源（腾讯/新浪/akshare）
+        provider = datasource.get_provider(db, "etf")
         bars = provider.fetch_daily(benchmark.symbol, start, end)
         rows = [(b.trade_date, Decimal(str(b.close))) for b in bars if b.close is not None]
         fetched = len(rows)
@@ -65,14 +66,5 @@ def sync(
 def _proxy_rows(
     db: Session, fund_id: int, start: date, end: date
 ) -> list[tuple[date, Decimal]]:
-    """代理基准：从 fund_price 拷贝收盘价（与基金历史价完全一致）。"""
-    rows = db.execute(
-        select(models.FundPrice.trade_date, models.FundPrice.close_price)
-        .where(
-            models.FundPrice.fund_id == fund_id,
-            models.FundPrice.trade_date >= start,
-            models.FundPrice.trade_date <= end,
-        )
-        .order_by(models.FundPrice.trade_date)
-    ).all()
-    return [(td, close) for td, close in rows if close is not None]
+    """代理基准：从基金历史价拷贝（按 fund_type 读 fund_price 收盘价或 fund_nav 净值）。"""
+    return price_svc.series(db, fund_id, start, end)

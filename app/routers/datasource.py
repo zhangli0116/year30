@@ -11,25 +11,17 @@ router = APIRouter(prefix="/api/v1/datasource", tags=["datasource"])
 
 @router.get("", response_model=ApiResponse[schemas.DataSourceOut])
 def get_current(db: Session = Depends(get_db)) -> ApiResponse:
-    """列出可选数据源 + 当前使用哪个（设置页切换用）。"""
-    current = datasource.get_provider(db).name
-    return success(
-        schemas.DataSourceOut(providers=datasource.list_providers(), current=current)
-    )
+    """按 fund_type 分组列出数据源配置（设置页切换用）。"""
+    return success(schemas.DataSourceOut(types=datasource.list_type_configs(db)))
 
 
 @router.put("", response_model=ApiResponse[schemas.DataSourceOut])
 def set_current(
     payload: schemas.DataSourceUpdate, db: Session = Depends(get_db)
 ) -> ApiResponse:
-    """切换「当前数据源」并持久化，返回更新后的状态。"""
+    """设置某 fund_type 的数据源并持久化，返回更新后的完整配置。"""
     try:
-        datasource.set_provider(db, payload.provider)
+        datasource.set_provider(db, payload.fund_type, payload.provider)
     except ValueError as e:
         return error(40006, str(e))
-    return success(
-        schemas.DataSourceOut(
-            providers=datasource.list_providers(),
-            current=datasource.get_provider(db).name,
-        )
-    )
+    return success(schemas.DataSourceOut(types=datasource.list_type_configs(db)))

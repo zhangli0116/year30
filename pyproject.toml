@@ -10,4 +10,9 @@ dependencies = [
     "pymysql>=1.2",
     "pydantic-settings>=2.14",
     "python-dotenv>=1.2",
+    "akshare>=1.18.83",
 ]
+
+[[tool.uv.index]]
+url = "https://pypi.tuna.tsinghua.edu.cn/simple"
+default = true

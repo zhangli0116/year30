@@ -55,11 +55,31 @@ CREATE TABLE fund (
     fund_code   VARCHAR(10)     NOT NULL COMMENT '基金/ETF代码，如 513500',
     fund_name   VARCHAR(64)     NOT NULL COMMENT '基金名称，如 标普500ETF',
     exchange    VARCHAR(16)     NOT NULL DEFAULT '上交所' COMMENT '上市交易所：上交所/深交所',
+    fund_type   VARCHAR(16)     NOT NULL DEFAULT 'etf' COMMENT '标的类型：etf=场内(ETF/LOF，K线) / otc=场外基金(净值)',
     currency    CHAR(3)         NOT NULL DEFAULT 'CNY' COMMENT '币种',
     created_at  DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
     PRIMARY KEY (id),
     UNIQUE KEY uk_fund_code (fund_code)
 ) ENGINE = InnoDB COMMENT = '指数基金基本信息';
+
+-- --------------------------------------------------
+-- 表 3.1：场外基金每日净值表 —— 与 fund_price 的交易所 OHLC 分开
+-- 场外基金（fund.fund_type='otc'）无盘口/无 OHLC，一天只有单位净值/累计净值
+-- --------------------------------------------------
+CREATE TABLE fund_nav (
+    id          INT UNSIGNED    NOT NULL AUTO_INCREMENT COMMENT '主键ID',
+    fund_id     INT UNSIGNED    NOT NULL COMMENT '基金ID -> fund.id',
+    trade_date  DATE            NOT NULL COMMENT '净值日期',
+    unit_nav    DECIMAL(10,4)   NOT NULL COMMENT '单位净值',
+    accum_nav   DECIMAL(10,4)   NULL COMMENT '累计净值',
+    source      VARCHAR(16)     NOT NULL DEFAULT 'eastmoney' COMMENT '数据源',
+    created_at  DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '记录创建时间',
+    PRIMARY KEY (id),
+    UNIQUE KEY uk_fund_nav_date (fund_id, trade_date),
+    KEY idx_nav_trade_date (trade_date),
+    CONSTRAINT fk_nav_fund FOREIGN KEY (fund_id) REFERENCES fund (id)
+        ON UPDATE CASCADE ON DELETE CASCADE
+) ENGINE = InnoDB COMMENT = '场外基金每日净值';
 
 -- --------------------------------------------------
 -- 表 4：定投周期汇总表 —— 某方案每一期投入一条
