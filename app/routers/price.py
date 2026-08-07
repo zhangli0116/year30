@@ -49,7 +49,7 @@ def get_prices(
     if fund is None:
         return error(40400, f"基金 {fund_id} 不存在")
     if fund.fund_type == FUND_TYPE_OTC:
-        # 场外基金无 OHLC，把净值映射为 PriceBarOut（close=单位净值，其余空）
+        # 场外基金无 OHLC，把净值映射为 PriceBarOut（close=累计净值[分红再投口径]，其余空）
         rows = crud.nav.list_navs(db, fund_id, start_date, end_date)
         return success(
             [
@@ -59,7 +59,7 @@ def get_prices(
                     open_price=None,
                     high_price=None,
                     low_price=None,
-                    close_price=r.unit_nav,
+                    close_price=r.accum_nav if r.accum_nav is not None else r.unit_nav,
                     volume=None,
                     source=r.source,
                 )

@@ -2,7 +2,8 @@
 
 按 `fund.fund_type` 分支取数：
     etf → fund_price.close_price
-    otc → fund_nav.unit_nav
+    otc → fund_nav.unit_nav（估值口径）；`series(accum=True)` 取累计净值（分红再投口径，
+        供价格页展示与回测计算，避免分红除权导致的净值虚跌）
 所有消费方（价格路由、持仓流水、XIRR、回测、基准代理、一键同步）
 统一走这里的 `series / existing_dates / latest`，避免各处重复判断类型。
 """
@@ -11,7 +12,7 @@ from __future__ import annotations
 from datetime import date
 from decimal import Decimal
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app import models
@@ -33,19 +34,38 @@ def series(
     fund_id: int,
     start_date: date,
     end_date: date,
+    accum: bool = False,
 ) -> list[tuple[date, Decimal]]:
     """某基金在 [start, end] 的价格序列 [(trade_date, price)] 升序。
-    单位净值/收盘价统一作为 price 返回。"""
+
+    otc 基金 `accum=True` 取累计净值（分红再投口径，价格页展示/回测用），
+    累计净值缺失的日期回退单位净值；缺省（`accum=False`）取单位净值（估值口径）。
+    etf 恒取收盘价，忽略 accum。
+    """
     if _is_otc(db, fund_id):
-        rows = db.execute(
-            select(models.FundNav.trade_date, models.FundNav.unit_nav)
-            .where(
-                models.FundNav.fund_id == fund_id,
-                models.FundNav.trade_date >= start_date,
-                models.FundNav.trade_date <= end_date,
-            )
-            .order_by(models.FundNav.trade_date)
-        ).all()
+        if accum:
+            rows = db.execute(
+                select(
+                    models.FundNav.trade_date,
+                    func.coalesce(models.FundNav.accum_nav, models.FundNav.unit_nav),
+                )
+                .where(
+                    models.FundNav.fund_id == fund_id,
+                    models.FundNav.trade_date >= start_date,
+                    models.FundNav.trade_date <= end_date,
+                )
+                .order_by(models.FundNav.trade_date)
+            ).all()
+        else:
+            rows = db.execute(
+                select(models.FundNav.trade_date, models.FundNav.unit_nav)
+                .where(
+                    models.FundNav.fund_id == fund_id,
+                    models.FundNav.trade_date >= start_date,
+                    models.FundNav.trade_date <= end_date,
+                )
+                .order_by(models.FundNav.trade_date)
+            ).all()
         return [(td, Decimal(str(p))) for td, p in rows if p is not None]
     rows = db.execute(
         select(models.FundPrice.trade_date, models.FundPrice.close_price)

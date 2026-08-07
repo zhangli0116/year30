@@ -7,7 +7,9 @@
     两个开关可独立组合（都开/都关/单开）
 指标：XIRR 年化（主，资金加权）、TWR（策略期间收益）、最大回撤/当前回撤（TWR 净值口径）、
       基准对比（归一化曲线 + CAGR）、各标的持仓占比时间序列（含现金）。
-撮合规则与真实系统完全一致：整手=100份、买入收盘价、非交易日顺延下一交易日、
+撮合规则与真实系统完全一致：整手=100份、买入收盘价、
+定投日排除非交易日——每日定投只在交易日投（非交易日不投、不累积）；
+周/月/季的计划日落在非交易日时顺延到下一交易日执行。
 手续费 max(5, 本金×费率)（买0.03%/卖0.07%，复用 crud/purchase 常量）。
 """
 from __future__ import annotations
@@ -86,8 +88,11 @@ def run_backtest(
     price_map: dict[int, dict[date, Decimal]] = {}
     all_dates: set[date] = set()
     for f in funds:
-        # 按 fund_type 取 fund_price 收盘价或 fund_nav 单位净值
-        pd = {td: price for td, price in price_svc.series(db, f["fund_id"], start_date, today)}
+        # 按 fund_type 取 fund_price 收盘价或 fund_nav 净值；场外用累计净值（分红再投口径，避免分红误差）
+        pd = {
+            td: price
+            for td, price in price_svc.series(db, f["fund_id"], start_date, today, accum=True)
+        }
         if not pd:
             warnings.append(f"基金 {f['fund_code']} 在区间内无历史价，无法参与回测")
         price_map[f["fund_id"]] = pd
@@ -105,9 +110,14 @@ def run_backtest(
     for y in {d.year for d in trade_days}:
         year_ends[y] = max(d for d in trade_days if d.year == y)
 
-    # 定投计划日（严格按起始日 + k×间隔，忽略容错；非交易日顺延到下一交易日执行）
+    # 定投计划日：排除非交易日（非交易日不进行定投）
+    #   interval==1（每日）：直接在交易日上逐日定投，非交易日跳过、不累积到下一交易日
+    #   interval>1（周/月/季）：按起始日 + k×间隔生成计划日；落在非交易日的计划日
+    #       由主循环 `while d >= schedule[i]` 顺延到下一交易日执行（一次一个周期，不叠加）
     schedule: list[date] = []
-    if interval > 0:
+    if interval == 1:
+        schedule = list(trade_days)
+    elif interval > 0:
         k = 0
         while True:
             sd = eff_start + timedelta(days=k * interval)

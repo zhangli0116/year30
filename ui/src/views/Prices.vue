@@ -380,7 +380,7 @@ function render() {
     chart.setOption(
       {
         tooltip: { trigger: 'axis' },
-        legend: { data: ['单位净值'], top: 0, left: 'center' },
+        legend: { data: ['累计净值'], top: 0, left: 'center' },
         grid: [{ left: 70, right: 20, top: 40, bottom: 60 }],
         xAxis: [
           {
@@ -397,7 +397,7 @@ function render() {
         ],
         series: [
           {
-            name: '单位净值',
+            name: '累计净值',
             type: 'line',
             data: navData,
             smooth: true,
