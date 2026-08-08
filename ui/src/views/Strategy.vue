@@ -192,7 +192,7 @@
         </div>
         <div v-for="(fac, fi) in f.amount.factors" :key="fi" class="factor-card">
           <div class="factor-head">
-            <el-input v-model="fac.id" placeholder="因子名" style="width: 140px" @blur="warnFactorName(fi)" />
+            <el-input v-model="fac.id" placeholder="因子名" style="width: 140px" @focus="onNameFocus(fi)" @blur="warnFactorName(fi)" />
             <el-select v-model="fac.type" style="width: 130px">
               <el-option label="水下(距峰值)" value="drawdown" />
               <el-option label="水上(近N日涨幅)" value="drawup" />
@@ -214,25 +214,19 @@
             <div v-for="(b, bi) in fac.bands" :key="bi" class="band-row">
               <el-input-number
                 v-model="b.min"
-                :step="0.01"
-                :precision="2"
-                :formatter="pctFormatter"
-                :parser="pctParser"
+                :step="1"
                 size="small"
                 style="width: 120px"
                 placeholder="—"
               />
               <el-input-number
                 v-model="b.max"
-                :step="0.01"
-                :precision="2"
-                :formatter="pctFormatter"
-                :parser="pctParser"
+                :step="1"
                 size="small"
                 style="width: 120px"
                 placeholder="—"
               />
-              <el-input-number v-model="b.mult" :step="0.05" :precision="2" size="small" style="width: 100px" />
+              <el-input-number v-model="b.mult" :min="0" :step="0.05" :precision="2" size="small" style="width: 100px" />
               <el-button link type="danger" @click="removeBand(fi, bi)">删</el-button>
             </div>
             <el-button size="small" plain @click="addBand(fi)">＋ 添加档位</el-button>
@@ -288,9 +282,9 @@ const defaultFactors = () => [
     enabled: true,
     window: 20,
     bands: [
-      { min: null, max: -0.15, mult: 1.2 },
-      { min: -0.15, max: -0.08, mult: 1.1 },
-      { min: -0.08, max: 0, mult: 1.0 },
+      { min: null, max: -15, mult: 1.2 },
+      { min: -15, max: -8, mult: 1.1 },
+      { min: -8, max: 0, mult: 1.0 },
     ],
   },
   {
@@ -299,9 +293,9 @@ const defaultFactors = () => [
     enabled: true,
     window: 20,
     bands: [
-      { min: 0.08, max: null, mult: 0.85 },
-      { min: 0.04, max: 0.08, mult: 0.9 },
-      { min: 0, max: 0.04, mult: 1.0 },
+      { min: 8, max: null, mult: 0.85 },
+      { min: 4, max: 8, mult: 0.9 },
+      { min: 0, max: 4, mult: 1.0 },
     ],
   },
 ]
@@ -334,11 +328,17 @@ function addFactor() {
     bands: [{ min: null, max: 0, mult: 1.0 }],
   })
 }
+const editingName = ref('') // 因子名编辑前的原值，重名时恢复
+function onNameFocus(fi) {
+  editingName.value = f.amount.factors[fi].id
+}
 function warnFactorName(fi) {
-  const name = f.amount.factors[fi].id.trim()
+  const fac = f.amount.factors[fi]
+  const name = fac.id.trim()
   if (!name) return
   if (f.amount.factors.some((x, i) => i !== fi && x.id.trim() === name)) {
-    ElMessage.warning(`因子名「${name}」已存在，请修改`)
+    ElMessage.warning(`因子名「${name}」已存在，已恢复为「${editingName.value || '未命名'}」`)
+    fac.id = editingName.value // 阻断重名：恢复编辑前名字
   }
 }
 const duplicateFactorIds = computed(() => {
@@ -360,17 +360,6 @@ function addBand(fi) {
 }
 function removeBand(fi, bi) {
   f.amount.factors[fi].bands.splice(bi, 1)
-}
-
-// 分档区间用百分比显示/输入：存储为小数（如 -0.15 ⇔ 显示 -15），与曲线图纵轴一致
-function pctFormatter(v) {
-  if (v == null || v === '') return ''
-  return String(Number((Number(v) * 100).toFixed(2)))
-}
-function pctParser(s) {
-  if (s === '' || s == null) return null
-  const n = Number(String(s).replace('%', ''))
-  return Number.isFinite(n) ? n / 100 : null
 }
 
 function threeYearsAgo() {
@@ -486,12 +475,22 @@ async function runStrategy() {
   loading.value = true
   result.value = null
   try {
+    // 分档阈值界面存百分比（-8 ⇔ -8%），提交时 ÷100 转小数（-0.08）供回测引擎使用
+    const strategy = JSON.parse(JSON.stringify(f))
+    strategy.amount.factors = strategy.amount.factors.map((fac) => ({
+      ...fac,
+      bands: fac.bands.map((b) => ({
+        ...b,
+        min: b.min == null ? null : Number((b.min / 100).toFixed(4)),
+        max: b.max == null ? null : Number((b.max / 100).toFixed(4)),
+      })),
+    }))
     const payload = {
       plan_id: planId.value,
       start_date: startDate.value,
       end_date: endDate.value || null,
       benchmarks: benchmarks.value,
-      strategy: JSON.parse(JSON.stringify(f)),
+      strategy,
     }
     result.value = await backtestApi.runStrategy(payload)
   } catch {
