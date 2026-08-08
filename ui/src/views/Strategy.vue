@@ -199,14 +199,32 @@
           </div>
           <div class="bands">
             <div class="band-head">
-              <span style="width: 120px">区间下限</span>
-              <span style="width: 120px">区间上限</span>
+              <span style="width: 120px">区间下限%</span>
+              <span style="width: 120px">区间上限%</span>
               <span style="width: 100px">金额乘数</span>
               <span></span>
             </div>
             <div v-for="(b, bi) in fac.bands" :key="bi" class="band-row">
-              <el-input-number v-model="b.min" :step="0.01" :precision="3" size="small" style="width: 120px" placeholder="—" />
-              <el-input-number v-model="b.max" :step="0.01" :precision="3" size="small" style="width: 120px" placeholder="—" />
+              <el-input-number
+                v-model="b.min"
+                :step="0.01"
+                :precision="2"
+                :formatter="pctFormatter"
+                :parser="pctParser"
+                size="small"
+                style="width: 120px"
+                placeholder="—"
+              />
+              <el-input-number
+                v-model="b.max"
+                :step="0.01"
+                :precision="2"
+                :formatter="pctFormatter"
+                :parser="pctParser"
+                size="small"
+                style="width: 120px"
+                placeholder="—"
+              />
               <el-input-number v-model="b.mult" :min="0" :step="0.05" :precision="2" size="small" style="width: 100px" />
               <el-button link type="danger" @click="removeBand(fi, bi)">删</el-button>
             </div>
@@ -223,7 +241,7 @@
       </div>
     </el-card>
 
-    <BacktestCharts :result="result" :loading="loading" />
+    <BacktestCharts :result="result" :loading="loading" :fund-name-map="fundNameMap" />
   </div>
 </template>
 
@@ -247,6 +265,7 @@ const result = ref(null)
 const coverage = ref(null)
 const benchmarks = ref([])
 const benchmarkList = ref([])
+const fundNameMap = ref({}) // 基金代码 → 名称（持仓占比图展示用）
 
 const defaultFactors = () => [
   {
@@ -303,6 +322,17 @@ function removeBand(fi, bi) {
   f.amount.factors[fi].bands.splice(bi, 1)
 }
 
+// 分档区间用百分比显示/输入：存储为小数（如 -0.15 ⇔ 显示 -15），与曲线图纵轴一致
+function pctFormatter(v) {
+  if (v == null || v === '') return ''
+  return String(Number((Number(v) * 100).toFixed(2)))
+}
+function pctParser(s) {
+  if (s === '' || s == null) return null
+  const n = Number(String(s).replace('%', ''))
+  return Number.isFinite(n) ? n / 100 : null
+}
+
 function threeYearsAgo() {
   const d = new Date()
   d.setFullYear(d.getFullYear() - 3)
@@ -318,6 +348,9 @@ async function loadPlanDefaults(pid) {
       if (f.amount.base == null && plan.amount != null) f.amount.base = Number(plan.amount)
       if (plan.start_date) startDate.value = plan.start_date
       else if (!startDate.value) startDate.value = threeYearsAgo()
+      fundNameMap.value = Object.fromEntries(
+        (plan.funds || []).map((x) => [x.fund_code, x.fund_name])
+      )
     }
   } catch {
     // 拦截器已提示

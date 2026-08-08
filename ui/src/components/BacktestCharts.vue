@@ -140,6 +140,8 @@ import {
 const props = defineProps({
   result: { type: Object, default: null },
   loading: { type: Boolean, default: false },
+  // 基金代码 → 名称映射（持仓占比图用名称展示；缺省回退代码）
+  fundNameMap: { type: Object, default: () => ({}) },
 })
 
 // ---- 指标卡派生 ----
@@ -310,7 +312,7 @@ function renderAllocChart() {
   const series = keys.map((k, idx) => {
     const color = k === '000000' ? colors.gray : fundPool[(idx - 1) % fundPool.length]
     return {
-      name: k === '000000' ? '现金' : k,
+      name: k === '000000' ? '现金' : (props.fundNameMap[k] || k),
       type: 'line',
       stack: 'all',
       smooth: true,
