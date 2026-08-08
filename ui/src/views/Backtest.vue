@@ -212,7 +212,7 @@
         <div ref="assetChartEl" class="chart-box" v-loading="loading"></div>
       </div>
       <div v-if="result" class="chart-card">
-        <div class="chart-title">回撤水下曲线</div>
+        <div class="chart-title">回撤水下 / 水上曲线</div>
         <div ref="ddChartEl" class="chart-box" v-loading="loading"></div>
       </div>
       <div v-if="result" class="chart-card">
@@ -519,16 +519,20 @@ function renderDDChart() {
   if (!ddChart) ddChart = echarts.init(ddChartEl.value)
   const ds = dates()
   const dd = (result.value.points || []).map((p) => p.drawdown)
+  const du = (result.value.points || []).map((p) => p.drawup)
   const pct = (v) => `${(v * 100).toFixed(1)}%`
   ddChart.setOption(
     {
       tooltip: { ...tooltip, valueFormatter: (v) => (v == null ? '-' : pct(v)) },
-      legend: { ...legend, data: ['回撤'] },
+      legend: { ...legend, data: ['回撤', '水上'] },
       grid,
       xAxis: xAxis(ds),
-      yAxis: yAxis('回撤', { formatter: pct }),
+      yAxis: yAxis('回撤 / 水上', { formatter: pct }),
       dataZoom,
-      series: signedArea('回撤', dd),
+      series: [
+        signedArea('回撤', dd),
+        signedArea('水上', du),
+      ],
     },
     true
   )
