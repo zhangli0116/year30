@@ -212,8 +212,12 @@
         <div ref="assetChartEl" class="chart-box" v-loading="loading"></div>
       </div>
       <div v-if="result" class="chart-card">
-        <div class="chart-title">回撤水下 / 水上曲线</div>
+        <div class="chart-title">回撤水下曲线（距峰值跌幅）</div>
         <div ref="ddChartEl" class="chart-box" v-loading="loading"></div>
+      </div>
+      <div v-if="result" class="chart-card">
+        <div class="chart-title">水上曲线（近 1 月涨幅 · 回调风险）</div>
+        <div ref="duChartEl" class="chart-box" v-loading="loading"></div>
       </div>
       <div v-if="result" class="chart-card">
         <div class="chart-title">基准对比（净值，起点=1）</div>
@@ -302,10 +306,12 @@ const warnings = ref([])
 
 const assetChartEl = ref(null)
 const ddChartEl = ref(null)
+const duChartEl = ref(null)
 const benchChartEl = ref(null)
 const allocChartEl = ref(null)
 let assetChart = null
 let ddChart = null
+let duChart = null
 let benchChart = null
 let allocChart = null
 
@@ -477,8 +483,8 @@ async function runBacktest() {
 }
 
 function disposeCharts() {
-  ;[assetChart, ddChart, benchChart, allocChart].forEach((c) => c && c.dispose())
-  assetChart = ddChart = benchChart = allocChart = null
+  ;[assetChart, ddChart, duChart, benchChart, allocChart].forEach((c) => c && c.dispose())
+  assetChart = ddChart = duChart = benchChart = allocChart = null
 }
 
 // ---- 图表 ----
@@ -519,20 +525,36 @@ function renderDDChart() {
   if (!ddChart) ddChart = echarts.init(ddChartEl.value)
   const ds = dates()
   const dd = (result.value.points || []).map((p) => p.drawdown)
-  const du = (result.value.points || []).map((p) => p.drawup)
   const pct = (v) => `${(v * 100).toFixed(1)}%`
   ddChart.setOption(
     {
       tooltip: { ...tooltip, valueFormatter: (v) => (v == null ? '-' : pct(v)) },
-      legend: { ...legend, data: ['回撤', '水上'] },
+      legend: { ...legend, data: ['回撤'] },
       grid,
       xAxis: xAxis(ds),
-      yAxis: yAxis('回撤 / 水上', { formatter: pct }),
+      yAxis: yAxis('回撤', { formatter: pct }),
       dataZoom,
-      series: [
-        signedArea('回撤', dd),
-        signedArea('水上', du),
-      ],
+      series: signedArea('回撤', dd),
+    },
+    true
+  )
+}
+
+function renderDUChart() {
+  if (!duChartEl.value) return
+  if (!duChart) duChart = echarts.init(duChartEl.value)
+  const ds = dates()
+  const du = (result.value.points || []).map((p) => p.drawup)
+  const pct = (v) => `${(v * 100).toFixed(1)}%`
+  duChart.setOption(
+    {
+      tooltip: { ...tooltip, valueFormatter: (v) => (v == null ? '-' : pct(v)) },
+      legend: { ...legend, data: ['水上'] },
+      grid,
+      xAxis: xAxis(ds),
+      yAxis: yAxis('水上', { formatter: pct }),
+      dataZoom,
+      series: signedArea('水上', du),
     },
     true
   )
@@ -632,6 +654,7 @@ function renderAllocChart() {
 function renderAll() {
   renderAssetChart()
   renderDDChart()
+  renderDUChart()
   renderBenchChart()
   renderAllocChart()
 }
@@ -639,6 +662,7 @@ function renderAll() {
 function onResize() {
   assetChart && assetChart.resize()
   ddChart && ddChart.resize()
+  duChart && duChart.resize()
   benchChart && benchChart.resize()
   allocChart && allocChart.resize()
 }

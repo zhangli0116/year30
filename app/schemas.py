@@ -582,7 +582,7 @@ class BacktestPointOut(BaseModel):
     invested: Decimal  # 累计投入
     nav: float  # TWR 累计净值
     drawdown: float  # 水下：相对历史峰值回撤（≤0）
-    drawup: float  # 水上：相对历史谷底涨幅（回撤镜像，≥0）
+    drawup: float  # 水上：近 20 交易日滚动涨幅（正=近期涨多→回调风险）
     allocations: dict[str, float] = Field(default_factory=dict)  # 各标的持仓占比(%)，现金键 000000
 
 
@@ -597,7 +597,7 @@ class BacktestMetricsOut(BaseModel):
     max_drawdown_start: Optional[date] = None  # 最大回撤对应峰值日
     max_drawdown_end: Optional[date] = None  # 最大回撤谷底日
     current_drawdown: float = 0.0
-    max_drawup: float = 0.0  # 最大水上涨幅（距谷底，≥0，回撤镜像）
+    max_drawup: float = 0.0  # 最大近 20 交易日滚动涨幅（超买峰值）
     current_drawup: float = 0.0
     invested: Decimal = Decimal("0")
     current_value: Decimal = Decimal("0")

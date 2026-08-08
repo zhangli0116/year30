@@ -28,6 +28,7 @@ from app.services.rebalance import get_params, judge, threshold_for
 from app.services.xirr import xirr
 
 _HANDS = 100  # 一手 = 100 份
+DRAWUP_WINDOW = 20  # 水上曲线：近 N 个交易日的滚动涨幅（约 1 个月），正=近期涨多→回调风险
 
 
 def run_backtest(
@@ -364,7 +365,7 @@ def run_backtest(
     # ---- 主循环（按交易日，非逐日历日）----
     nav = 1.0
     peak = 1.0  # 净值运行最高点（水下曲线参考）
-    trough = 1.0  # 净值运行最低点（水上曲线参考，回撤镜像）
+    nav_history: list[float] = []  # 逐日净值序列（水上滚动涨幅用）
     max_dd = 0.0
     max_du = 0.0
     peak_date: date | None = None
@@ -399,16 +400,17 @@ def run_backtest(
             if nav > peak:
                 peak = nav
                 peak_date = d
-            if nav < trough:
-                trough = nav
             dd = nav / peak - 1.0  # 水下：距峰值跌幅（恒 ≤0）
-            du = nav / trough - 1.0 if trough > 0 else 0.0  # 水上：距谷底涨幅（回撤镜像，恒 ≥0）
             if dd < max_dd:
                 max_dd = dd
                 max_peak_date = peak_date  # 冻结该回撤发生时对应的峰值日期
                 trough_date = d
-            if du > max_du:
-                max_du = du
+        # 水上：近 DRAWUP_WINDOW 个交易日的滚动涨幅（正=近期涨多→回调风险）
+        nav_history.append(nav)
+        if len(nav_history) > DRAWUP_WINDOW:
+            du = nav / nav_history[-DRAWUP_WINDOW - 1] - 1.0
+        if du > max_du:
+            max_du = du
         # 各标的持仓占比（%），现金以 000000 键承载（与真实系统口径一致）
         alloc = {}
         for f in funds:
@@ -448,7 +450,11 @@ def run_backtest(
         twr_annualized = (1.0 + twr) ** (365.0 / span_days) - 1.0
 
     current_drawdown = nav / peak - 1.0 if peak > 0 else 0.0
-    current_drawup = nav / trough - 1.0 if trough > 0 else 0.0
+    current_drawup = (
+        nav / nav_history[-DRAWUP_WINDOW - 1] - 1.0
+        if len(nav_history) > DRAWUP_WINDOW
+        else 0.0
+    )
     gain = terminal - float(invested)
     gain_pct = gain / float(invested) * 100 if invested > 0 else None
 
