@@ -572,6 +572,7 @@ class BacktestTradeOut(BaseModel):
     fee: Decimal
     total_amount: Decimal
     reason: Literal["period", "annual"]  # period=每期定投 / annual=年末再平衡
+    amount_mult: Optional[float] = None  # 本期金额缩放系数（动态金额因子），period 有效
 
 
 class BacktestPointOut(BaseModel):
@@ -628,6 +629,7 @@ class BacktestParamsOut(BaseModel):
     buy_rebalance: bool = True  # 买入式再平衡（每期低配补买）
     sell_rebalance: bool = True  # 卖出式再平衡（年末超配卖出）
     unlisted_mode: str = "park"  # 未上市标的处理：park=现金停泊 / redistribute=比例重分配
+    drawup_window: int = 20  # 水上曲线近 N 交易日滚动涨幅窗口（动态可调）
 
 
 class BacktestOut(BaseModel):
@@ -639,6 +641,70 @@ class BacktestOut(BaseModel):
     trades: list[BacktestTradeOut] = Field(default_factory=list)
     benchmarks: list[BacktestBenchmarkOut] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
+
+
+# =========================================================
+# 回测策略配置（策略实验室：参数显式化 + 动态金额因子）
+# =========================================================
+
+
+class FactorBand(BaseModel):
+    """因子分档：命中 [min, max]（含端点，None=开区间）时金额乘 mult。"""
+
+    min: Optional[float] = None
+    max: Optional[float] = None
+    mult: float = 1.0
+
+
+class AmountFactor(BaseModel):
+    """动态金额因子：每期金额 = 基准金额 × 各启用因子 band 乘数（叠加）。"""
+
+    id: str = ""  # 因子标识（前端展示）
+    type: Literal["drawdown", "drawup"] = "drawdown"  # 水下(距峰值) / 水上(近 window 日滚动涨幅)
+    enabled: bool = True
+    window: int = 20  # drawup 的滚动窗口（交易日）
+    bands: list[FactorBand] = Field(default_factory=list)
+
+
+class FeeConfig(BaseModel):
+    buy_rate: float = 0.03  # 买入费率(%)
+    sell_rate: float = 0.07  # 卖出费率(%)
+    min_fee: float = 5.0  # 最低手续费(元)
+
+
+class AmountConfig(BaseModel):
+    base: Optional[Decimal] = Field(None, gt=0, description="每期基准金额，None=用方案 amount")
+    factors: list[AmountFactor] = Field(default_factory=list)
+
+
+class RbOverride(BaseModel):
+    """年末卖出式判定阈值（本次运行覆盖 app_setting，None=不覆盖）。"""
+
+    r_band: Optional[float] = Field(None, gt=0, le=100)
+    min_abs: Optional[float] = Field(None, ge=0, le=100)
+    max_abs: Optional[float] = Field(None, ge=0, le=100)
+    amount_floor: Optional[float] = Field(None, ge=0)
+
+
+class StrategyConfig(BaseModel):
+    """回测策略配置：所有旋钮显式化。"""
+
+    buy_rebalance: bool = True
+    sell_rebalance: bool = True
+    unlisted_mode: str = "park"  # park=现金停泊 / redistribute=比例重分配
+    hands: int = 100  # 每手份数
+    drawup_window: int = 20  # 水上曲线近 N 交易日滚动涨幅窗口
+    fees: FeeConfig = Field(default_factory=FeeConfig)
+    rb: RbOverride = Field(default_factory=RbOverride)
+    amount: AmountConfig = Field(default_factory=AmountConfig)
+
+
+class StrategyRunIn(BaseModel):
+    plan_id: int = Field(..., description="方案ID")
+    start_date: date = Field(..., description="回测起始日")
+    end_date: Optional[date] = Field(None, description="回测结束日，缺省今天")
+    benchmarks: list[str] = Field(default_factory=list, description="逗号分隔的基准 symbol 列表，如 ['sh000300']")
+    strategy: StrategyConfig = Field(..., description="回测策略配置")
 
 
 # =========================================================

@@ -131,6 +131,8 @@ export const backtestApi = {
   // GET /api/v1/backtest → 回测结果
   // params: {plan_id, start_date, end_date?, amount?, benchmarks?(逗号分隔), buy_rebalance?, sell_rebalance?}
   run: (params) => request.get('/backtest', { params }),
+  // POST /api/v1/backtest/strategy → 策略实验室（完整策略配置 + 动态金额因子）
+  runStrategy: (data) => request.post('/backtest/strategy', data, { timeout: 60000 }),
   // GET /api/v1/backtest/coverage → 数据覆盖检查
   coverage: (params) => request.get('/backtest/coverage', { params }),
 }

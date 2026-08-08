@@ -39,9 +39,9 @@
           <el-icon><Odometer /></el-icon>
           <span>再平衡体检</span>
         </el-menu-item>
-        <el-menu-item index="/backtest">
-          <el-icon><DataLine /></el-icon>
-          <span>方案回测</span>
+        <el-menu-item index="/strategy">
+          <el-icon><MagicStick /></el-icon>
+          <span>策略实验室</span>
         </el-menu-item>
         <el-menu-item index="/settings">
           <el-icon><Setting /></el-icon>

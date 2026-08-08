@@ -1,6 +1,5 @@
 import { createRouter, createWebHashHistory } from 'vue-router'
 
-import Backtest from '../views/Backtest.vue'
 import Calculator from '../views/Calculator.vue'
 import Cash from '../views/Cash.vue'
 import Dashboard from '../views/Dashboard.vue'
@@ -11,6 +10,7 @@ import Purchases from '../views/Purchases.vue'
 import Rebalance from '../views/Rebalance.vue'
 import RebalanceCheck from '../views/RebalanceCheck.vue'
 import Settings from '../views/Settings.vue'
+import Strategy from '../views/Strategy.vue'
 
 // 使用 hash 模式：后续若把构建产物交给 FastAPI 托管，也无需服务端路由配置
 const router = createRouter({
@@ -23,7 +23,7 @@ const router = createRouter({
     { path: '/cash', name: 'cash', component: Cash, meta: { title: '每日现金流量' } },
     { path: '/purchases', name: 'purchases', component: Purchases, meta: { title: '购买记录' } },
     { path: '/calculator', name: 'calculator', component: Calculator, meta: { title: '定投与再平衡计算器' } },
-    { path: '/backtest', name: 'backtest', component: Backtest, meta: { title: '方案回测' } },
+    { path: '/strategy', name: 'strategy', component: Strategy, meta: { title: '策略实验室' } },
     { path: '/settings', name: 'settings', component: Settings, meta: { title: '系统设置' } },
     { path: '/rebalance', name: 'rebalance', component: Rebalance, meta: { title: '临时再平衡' } },
     { path: '/rebalance-check', name: 'rebalance-check', component: RebalanceCheck, meta: { title: '再平衡体检' } },

@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 from bisect import bisect_right
+from copy import deepcopy
 from datetime import date, timedelta
 from decimal import Decimal
 
@@ -22,13 +23,71 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app import models
-from app.crud.purchase import MIN_FEE, _calc_fee
 from app.services import prices as price_svc
 from app.services.rebalance import get_params, judge, threshold_for
 from app.services.xirr import xirr
 
-_HANDS = 100  # 一手 = 100 份
 DRAWUP_WINDOW = 20  # 水上曲线：近 N 个交易日的滚动涨幅（约 1 个月），正=近期涨多→回调风险
+
+# 回测策略默认配置：所有旋钮显式化，可整体传入 strategy 覆盖
+DEFAULT_STRATEGY = {
+    "buy_rebalance": True,  # 买入式再平衡（每期低配补买、超配不卖）
+    "sell_rebalance": True,  # 卖出式再平衡（年末超配卖出回现金）
+    "unlisted_mode": "park",  # 未上市标的处理：park=现金停泊 / redistribute=比例重分配
+    "hands": 100,  # 一手份数
+    "drawup_window": DRAWUP_WINDOW,  # 水上曲线近 N 交易日滚动涨幅窗口
+    "fees": {"buy_rate": 0.03, "sell_rate": 0.07, "min_fee": 5.0},  # 费率(%)
+    # 年末卖出式判定阈值：空=用 app_setting（体检页保存的那套）
+    "rb": {},
+    "amount": {"base": None, "factors": []},  # 每期基准金额 + 动态金额因子
+}
+
+# 因子类型：drawdown=组合水下(nav/peak−1)；drawup=近 window 交易日滚动涨幅
+FACTOR_TYPES = ("drawdown", "drawup")
+
+
+def _merge_strategy(strategy: dict | None) -> dict:
+    """合入默认策略；嵌套 dict 浅合并（fees/rb/amount.factors 由外层整体替换或逐键覆盖）。"""
+    merged = deepcopy(DEFAULT_STRATEGY)
+    if not strategy:
+        return merged
+    for k, v in strategy.items():
+        if k in merged and isinstance(merged[k], dict) and isinstance(v, dict):
+            merged[k].update(v)
+        else:
+            merged[k] = v
+    return merged
+
+
+def _band_multiplier(bands: list[dict], sig: float) -> float:
+    """分档查找：取第一个 min≤sig≤max（None=开区间）的乘数，未命中默认 1.0。"""
+    for b in bands:
+        lo = b.get("min")
+        hi = b.get("max")
+        if lo is not None and sig < lo:
+            continue
+        if hi is not None and sig > hi:
+            continue
+        return float(b.get("mult", 1.0))
+    return 1.0
+
+
+def _factor_multiplier(factors, nav: float, peak: float, nav_history: list[float], default_window: int) -> float:
+    """每期金额乘数 = Π 各启用因子的 band 乘数（基于"前一日"组合状态，无前视）。"""
+    mult = 1.0
+    for f in factors:
+        if not f.get("enabled", True):
+            continue
+        ftype = f.get("type")
+        if ftype == "drawdown":
+            sig = nav / peak - 1.0 if peak > 0 else 0.0
+        elif ftype == "drawup":
+            window = int(f.get("window") or default_window or DRAWUP_WINDOW)
+            sig = nav / nav_history[-window - 1] - 1.0 if len(nav_history) > window else 0.0
+        else:
+            continue
+        mult *= _band_multiplier(f.get("bands") or [], sig)
+    return mult
 
 
 def run_backtest(
@@ -36,27 +95,43 @@ def run_backtest(
     plan: models.DcaPlan,
     start_date: date,
     end_date: date | None = None,
-    amount: Decimal | None = None,
+    strategy: dict | None = None,
     benchmark_symbols: list[str] | None = None,
-    buy_rebalance: bool = True,
-    sell_rebalance: bool = True,
-    unlisted_mode: str = "park",
 ) -> dict:
     """执行回测，返回结构化的结果 dict（供 router 组装 schema）。
 
-    unlisted_mode：方案内标的「当时未上市/无历史价」时的处理——
-        park（默认）       ：现金停泊，缺席标的的份额趴在现金里，上市后再补买
-        redistribute       ：比例重分配，缺席标的的份额按比例分给已有标的（现金保持目标），
-                             上市后切回原目标（会产生一次调仓）
+    strategy：回测策略配置（见 DEFAULT_STRATEGY）——买入/卖出式、费率、每手份数、
+        年末判定阈值、未上市处理、动态金额因子等全部旋钮可在此手动设置。
     """
+    s = _merge_strategy(strategy)
+    buy_rebalance = bool(s["buy_rebalance"])
+    sell_rebalance = bool(s["sell_rebalance"])
+    unlisted_mode = s["unlisted_mode"]
+    per_hand = int(s["hands"])
+    drawup_window = int(s["drawup_window"])
+    fee_buy = Decimal(str(s["fees"]["buy_rate"]))
+    fee_sell = Decimal(str(s["fees"]["sell_rate"]))
+    min_fee = Decimal(str(s["fees"]["min_fee"]))
+    amount_cfg = s["amount"]
+    base_amount = (
+        Decimal(str(amount_cfg["base"]))
+        if amount_cfg.get("base") is not None
+        else Decimal(str(plan.amount or 0))
+    )
+    factors = amount_cfg.get("factors") or []
+
     today = end_date or date.today()
-    benchmark_symbols = benchmark_symbols or []
-    amount = amount if amount is not None else Decimal(str(plan.amount or 0))
+    amount = base_amount  # 每期基准金额
     interval = plan.interval_days or 0
     warnings: list[str] = []
     cash_target_pct = Decimal(str(plan.cash_ratio or 0))
-    # 年末卖出式再平衡的判定参数与「再平衡体检」一致（app_setting，可在体检页调）
+    # 年末卖出式判定阈值：app_setting 为底，strategy.rb 逐项覆盖（策略页实验室式调参，不改 app_setting）
     rb_params = get_params(db)
+    rb_params.update({k: float(v) for k, v in (s["rb"] or {}).items() if v is not None})
+
+    def calc_fee(principal: Decimal, is_sell: bool) -> Decimal:
+        rate = fee_sell if is_sell else fee_buy
+        return max(min_fee, (principal * rate / Decimal("100")).quantize(Decimal("0.01")))
 
     # ---- 方案标的（排除现金虚拟基金）----
     plan_funds = db.execute(
@@ -100,7 +175,7 @@ def run_backtest(
         all_dates.update(pd.keys())
     trade_days = sorted(all_dates)
     if not trade_days:
-        return _empty(plan, warnings, amount, start_date, today, buy_rebalance, sell_rebalance, unlisted_mode)
+        return _empty(plan, warnings, base_amount, start_date, today, s)
 
     eff_start = max(start_date, trade_days[0])
     last_day = trade_days[-1]
@@ -186,20 +261,20 @@ def run_backtest(
             gap = total * target_pct_for(f, d) / Decimal("100") - mv
             if gap <= 0:
                 continue  # 超配/达标 → 不卖
-            lot = price * _HANDS
+            lot = price * per_hand
             hands = int(gap // lot)
             if hands <= 0:
                 continue
             principal = hands * lot
-            fee = _calc_fee(principal, None, None, is_sell=False)
+            fee = calc_fee(principal, False)
             if principal + fee > cash:
-                hands = int((cash - MIN_FEE) // lot)
+                hands = int((cash - min_fee) // lot)
                 if hands <= 0:
                     continue
                 principal = hands * lot
-                fee = _calc_fee(principal, None, None, is_sell=False)
+                fee = calc_fee(principal, False)
             cash -= principal + fee
-            shares[fid] = shares.get(fid, 0) + hands * _HANDS
+            shares[fid] = shares.get(fid, 0) + hands * per_hand
             trades.append(
                 {
                     "date": d,
@@ -212,6 +287,7 @@ def run_backtest(
                     "fee": fee,
                     "total_amount": principal,
                     "reason": reason,
+                    "amount_mult": period_mult,  # 动态金额因子缩放系数（本期）
                 }
             )
 
@@ -240,7 +316,7 @@ def run_backtest(
                 continue
             newly = fid not in ever_available
             ever_available.add(fid)
-            lot = price * _HANDS
+            lot = price * per_hand
             if newly and unlisted_mode == "park":
                 # 新上市（仅 park 有停泊现金）：一次补到目标占比
                 gap = total_now * eff / Decimal("100") - shares.get(fid, 0) * price
@@ -251,15 +327,15 @@ def run_backtest(
             if hands <= 0:
                 continue
             principal = hands * lot
-            fee = _calc_fee(principal, None, None, is_sell=False)
+            fee = calc_fee(principal, False)
             if principal + fee > cash:
-                hands = int((cash - MIN_FEE) // lot)
+                hands = int((cash - min_fee) // lot)
                 if hands <= 0:
                     continue
                 principal = hands * lot
-                fee = _calc_fee(principal, None, None, is_sell=False)
+                fee = calc_fee(principal, False)
             cash -= principal + fee
-            shares[fid] = shares.get(fid, 0) + hands * _HANDS
+            shares[fid] = shares.get(fid, 0) + hands * per_hand
             trades.append(
                 {
                     "date": d,
@@ -272,6 +348,7 @@ def run_backtest(
                     "fee": fee,
                     "total_amount": principal,
                     "reason": reason,
+                    "amount_mult": period_mult,  # 动态金额因子缩放系数（本期）
                 }
             )
 
@@ -304,14 +381,14 @@ def run_backtest(
                 if not need or status != "above":
                     continue
                 target_mv = total * target_pct_for(f, d) / Decimal("100")
-                lot = price * _HANDS
+                lot = price * per_hand
                 hands = int((mv - target_mv) // lot)
                 if hands <= 0:
                     continue
                 principal = hands * lot
-                fee = _calc_fee(principal, None, None, is_sell=True)
+                fee = calc_fee(principal, True)
                 cash += principal - fee
-                shares[fid] = shares.get(fid, 0) - hands * _HANDS
+                shares[fid] = shares.get(fid, 0) - hands * per_hand
                 trades.append(
                     {
                         "date": d,
@@ -338,15 +415,15 @@ def run_backtest(
                 if not need or status != "below":
                     continue
                 target_mv = total * target_pct_for(f, d) / Decimal("100")
-                lot = price * _HANDS
+                lot = price * per_hand
                 gap = target_mv - mv
-                hands = min(int(gap // lot), int((cash - MIN_FEE) // lot))
+                hands = min(int(gap // lot), int((cash - min_fee) // lot))
                 if hands <= 0:
                     continue
                 principal = hands * lot
-                fee = _calc_fee(principal, None, None, is_sell=False)
+                fee = calc_fee(principal, False)
                 cash -= principal + fee
-                shares[fid] = shares.get(fid, 0) + hands * _HANDS
+                shares[fid] = shares.get(fid, 0) + hands * per_hand
                 trades.append(
                     {
                         "date": d,
@@ -374,13 +451,21 @@ def run_backtest(
     prev_V: Decimal | None = None
     invested = Decimal("0")
     i = 0
+    period_mult = 1.0  # 本期金额缩放系数（动态金额因子乘积），记录到 period 成交
     for d in trade_days:
+        # 动态金额：用"前一日"组合状态算因子乘数（决策时看不到当日收盘，无前视）
+        if factors:
+            period_mult = _factor_multiplier(factors, nav, peak, nav_history, drawup_window)
+        else:
+            period_mult = 1.0
+        amt = (base_amount * Decimal(str(period_mult))).quantize(Decimal("0.01"))
         dep_t = Decimal("0")
         while i < len(schedule) and d >= schedule[i]:
-            cash += amount
-            deposits.append((d, amount))
-            dep_t += amount
-            invested += amount
+            if amt > 0:
+                cash += amt
+                deposits.append((d, amt))
+                dep_t += amt
+                invested += amt
             i += 1
         p = prices_at(d)
         if dep_t > 0:
@@ -405,10 +490,10 @@ def run_backtest(
                 max_dd = dd
                 max_peak_date = peak_date  # 冻结该回撤发生时对应的峰值日期
                 trough_date = d
-        # 水上：近 DRAWUP_WINDOW 个交易日的滚动涨幅（正=近期涨多→回调风险）
+        # 水上：近 drawup_window 个交易日的滚动涨幅（正=近期涨多→回调风险）
         nav_history.append(nav)
-        if len(nav_history) > DRAWUP_WINDOW:
-            du = nav / nav_history[-DRAWUP_WINDOW - 1] - 1.0
+        if len(nav_history) > drawup_window:
+            du = nav / nav_history[-drawup_window - 1] - 1.0
         if du > max_du:
             max_du = du
         # 各标的持仓占比（%），现金以 000000 键承载（与真实系统口径一致）
@@ -451,8 +536,8 @@ def run_backtest(
 
     current_drawdown = nav / peak - 1.0 if peak > 0 else 0.0
     current_drawup = (
-        nav / nav_history[-DRAWUP_WINDOW - 1] - 1.0
-        if len(nav_history) > DRAWUP_WINDOW
+        nav / nav_history[-drawup_window - 1] - 1.0
+        if len(nav_history) > drawup_window
         else 0.0
     )
     gain = terminal - float(invested)
@@ -477,6 +562,7 @@ def run_backtest(
             "buy_rebalance": buy_rebalance,
             "sell_rebalance": sell_rebalance,
             "unlisted_mode": unlisted_mode,
+            "drawup_window": drawup_window,
         },
         "metrics": {
             "xirr": xirr_val,
@@ -723,7 +809,7 @@ def _segments(days: list[date]) -> list[dict]:
     return out
 
 
-def _empty(plan, warnings, amount, start_date, today, buy_rebalance=True, sell_rebalance=True, unlisted_mode="park") -> dict:
+def _empty(plan, warnings, amount, start_date, today, s: dict) -> dict:
     return {
         "plan_id": plan.id,
         "plan_name": plan.name,
@@ -733,9 +819,10 @@ def _empty(plan, warnings, amount, start_date, today, buy_rebalance=True, sell_r
             "amount": amount,
             "interval_days": plan.interval_days or 0,
             "rebalance_strategy": plan.rebalance_strategy,
-            "buy_rebalance": buy_rebalance,
-            "sell_rebalance": sell_rebalance,
-            "unlisted_mode": unlisted_mode,
+            "buy_rebalance": bool(s["buy_rebalance"]),
+            "sell_rebalance": bool(s["sell_rebalance"]),
+            "unlisted_mode": s["unlisted_mode"],
+            "drawup_window": int(s["drawup_window"]),
         },
         "metrics": {
             "xirr": None,

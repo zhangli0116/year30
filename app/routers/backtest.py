@@ -45,6 +45,12 @@ def run(
         "park",
         description="未上市标的处理：park=现金停泊(默认) / redistribute=比例重分配",
     ),
+    drawup_window: int = Query(
+        backtest_service.DRAWUP_WINDOW,
+        ge=1,
+        le=500,
+        description="水上曲线近 N 交易日滚动涨幅窗口（默认 20，可动态调整）",
+    ),
     db: Session = Depends(get_db),
 ) -> ApiResponse:
     """回测：每期入账+买入式/纯定投平衡，年末卖出式再平衡（两开关可独立组合），算年化回报并对比基准。"""
@@ -53,19 +59,49 @@ def run(
         return error(40403, f"方案 {plan_id} 不存在")
     if unlisted_mode not in ("park", "redistribute"):
         return error(40006, f"未知未上市处理方式：{unlisted_mode}")
+    # 兼容旧接口：flat 查询参数组装成策略配置（rb 阈值用 app_setting 默认）
+    strategy = {
+        "buy_rebalance": buy_rebalance,
+        "sell_rebalance": sell_rebalance,
+        "unlisted_mode": unlisted_mode,
+        "drawup_window": drawup_window,
+        "amount": {"base": amount},  # None → 用方案 amount
+    }
     data = backtest_service.run_backtest(
         db,
         plan,
         start_date=start_date,
         end_date=end_date,
-        amount=amount,
+        strategy=strategy,
         benchmark_symbols=_split_symbols(benchmarks),
-        buy_rebalance=buy_rebalance,
-        sell_rebalance=sell_rebalance,
-        unlisted_mode=unlisted_mode,
     )
     logger.info(
         f"回测 方案{plan_id} {start_date}~{end_date or date.today()} "
+        f"XIRR={data['metrics']['xirr']} TWR={data['metrics']['twr']}"
+    )
+    return success(schemas.BacktestOut(**data))
+
+
+@router.post("/strategy", response_model=ApiResponse[schemas.BacktestOut])
+def run_strategy(
+    payload: schemas.StrategyRunIn, db: Session = Depends(get_db)
+) -> ApiResponse:
+    """策略实验室：按完整策略配置（含动态金额因子）跑回测。"""
+    plan = crud.plan.get_plan(db, payload.plan_id)
+    if plan is None:
+        return error(40403, f"方案 {payload.plan_id} 不存在")
+    if payload.strategy.unlisted_mode not in ("park", "redistribute"):
+        return error(40006, f"未知未上市处理方式：{payload.strategy.unlisted_mode}")
+    data = backtest_service.run_backtest(
+        db,
+        plan,
+        start_date=payload.start_date,
+        end_date=payload.end_date,
+        strategy=payload.strategy.model_dump(),
+        benchmark_symbols=payload.benchmarks,
+    )
+    logger.info(
+        f"策略回测 方案{payload.plan_id} {payload.start_date}~{payload.end_date or date.today()} "
         f"XIRR={data['metrics']['xirr']} TWR={data['metrics']['twr']}"
     )
     return success(schemas.BacktestOut(**data))
