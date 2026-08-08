@@ -25,7 +25,11 @@
       <el-table-column prop="exchange" label="交易所" width="100" />
       <el-table-column label="类型" width="100">
         <template #default="{ row }">
-          <el-tag size="small" :type="row.fund_type === 'otc' ? 'warning' : 'primary'" effect="plain">
+          <el-tag
+            size="small"
+            :type="row.fund_type === 'otc' ? 'warning' : row.fund_type === 'stock' ? 'success' : 'primary'"
+            effect="plain"
+          >
             {{ fundTypeText(row.fund_type) }}
           </el-tag>
         </template>
@@ -65,6 +69,7 @@
         <el-form-item label="标的类型" prop="fund_type">
           <el-select v-model="form.fund_type">
             <el-option label="场内ETF / LOF（K线行情）" value="etf" />
+            <el-option label="A股股票（K线行情）" value="stock" />
             <el-option label="场外基金（净值）" value="otc" />
           </el-select>
         </el-form-item>
@@ -273,7 +278,7 @@ const form = reactive({
 })
 
 function fundTypeText(v) {
-  return { etf: '场内ETF', otc: '场外基金' }[v] || v || '场内ETF'
+  return { etf: '场内ETF/LOF', stock: 'A股股票', otc: '场外基金' }[v] || v || '场内ETF/LOF'
 }
 
 // ---- 定投方案管理 ----

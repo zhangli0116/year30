@@ -55,7 +55,7 @@ CREATE TABLE fund (
     fund_code   VARCHAR(10)     NOT NULL COMMENT '基金/ETF代码，如 513500',
     fund_name   VARCHAR(64)     NOT NULL COMMENT '基金名称，如 标普500ETF',
     exchange    VARCHAR(16)     NOT NULL DEFAULT '上交所' COMMENT '上市交易所：上交所/深交所',
-    fund_type   VARCHAR(16)     NOT NULL DEFAULT 'etf' COMMENT '标的类型：etf=场内(ETF/LOF，K线) / otc=场外基金(净值)',
+    fund_type   VARCHAR(16)     NOT NULL DEFAULT 'etf' COMMENT '标的类型：etf=场内ETF/LOF(K线) / stock=A股股票(K线) / otc=场外基金(净值)',
     currency    CHAR(3)         NOT NULL DEFAULT 'CNY' COMMENT '币种',
     created_at  DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
     PRIMARY KEY (id),

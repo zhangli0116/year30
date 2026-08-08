@@ -4,8 +4,8 @@
 统一走 `get_provider(db, fund_type)` 获取该标的类型对应的数据源。
 
 配置按 fund_type 分别存储（app_setting 键 `datasource.provider.{fund_type}`）：
-    - etf（场内）：腾讯 / 新浪 / AKShare
-    - otc（场外）：东财净值 / AKShare
+    - etf（场内 ETF/LOF）/ stock（A股股票）：腾讯 / 新浪 / AKShare
+    - otc（场外基金）：东财净值 / AKShare
 切换通过 `GET/PUT /api/v1/datasource`，body 为 `{fund_type, provider}`。
 兼容旧键 `datasource.provider`（etf 类型未设新键时回退读取）。
 """
@@ -18,6 +18,7 @@ from app import crud, models
 from app.services.price import (
     FUND_TYPE_ETF,
     FUND_TYPE_OTC,
+    FUND_TYPE_STOCK,
     DataProvider,
     TencentProvider,
 )
@@ -27,13 +28,15 @@ KEY_PROVIDER_PREFIX = "datasource.provider."
 
 # 各 fund_type 的展示名（设置页分组标题）
 FUND_TYPE_LABELS = {
-    FUND_TYPE_ETF: "场内基金 (ETF/LOF)",
+    FUND_TYPE_ETF: "场内 ETF/LOF",
+    FUND_TYPE_STOCK: "A股股票",
     FUND_TYPE_OTC: "场外基金",
 }
 
 # 各 fund_type 默认数据源（未配置/值非法时回退）
 DEFAULT_PROVIDER = {
     FUND_TYPE_ETF: "tencent",
+    FUND_TYPE_STOCK: "tencent",
     FUND_TYPE_OTC: "eastmoney",
 }
 

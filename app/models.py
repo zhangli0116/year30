@@ -89,7 +89,7 @@ class Fund(Base):
     fund_name: Mapped[str] = mapped_column(String(64), nullable=False, comment="基金名称")
     exchange: Mapped[str] = mapped_column(String(16), nullable=False, default="上交所", comment="交易所")
     fund_type: Mapped[str] = mapped_column(
-        String(16), nullable=False, default="etf", comment="标的类型：etf=场内(ETF/LOF，K线) / otc=场外基金(净值)"
+        String(16), nullable=False, default="etf", comment="标的类型：etf=场内ETF/LOF(K线) / stock=A股股票(K线) / otc=场外基金(净值)"
     )
     currency: Mapped[str] = mapped_column(String(3), nullable=False, default="CNY", comment="币种")
     created_at: Mapped[datetime] = mapped_column(

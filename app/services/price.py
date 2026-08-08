@@ -19,8 +19,12 @@ from datetime import date, datetime, timedelta
 
 from app.logger import logger
 
-# 标的类型：etf=场内(ETF/LOF，交易所K线+盘口) / otc=场外基金(只有净值)
+# 标的类型：
+#   etf   = 场内 ETF/LOF（交易所K线+盘口，fund_price）
+#   stock = A股股票（交易所K线+盘口，fund_price，与 etf 数据管线一致）
+#   otc   = 场外基金（只有净值，fund_nav）
 FUND_TYPE_ETF = "etf"
+FUND_TYPE_STOCK = "stock"
 FUND_TYPE_OTC = "otc"
 
 # 日线数据：一天一根 K 线（OHLC + 成交量）
@@ -72,7 +76,7 @@ class TencentProvider(DataProvider):
 
     name = "tencent"
     label = "腾讯行情"
-    fund_types = (FUND_TYPE_ETF,)
+    fund_types = (FUND_TYPE_ETF, FUND_TYPE_STOCK)
     _KLINE_URL = "https://web.ifzq.gtimg.cn/appstock/app/fqkline/get"
     _KLINE_COUNT = 2000  # 单次最大条数（实测 count>2000 返回 param error）
     _QUOTE_URL = "https://qt.gtimg.cn/q={symbols}"
