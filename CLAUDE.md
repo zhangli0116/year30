@@ -19,3 +19,9 @@
 ## 开发前先看
 - 改架构/数据源/价格相关代码前，先读 [docs/architecture.md](docs/architecture.md) 对应章节（分层、数据流、数据源抽象、设计决策），保持风格一致
 - 表结构由 `schema.sql` 管理，**无 Alembic**：`create_all` 只补缺失表，改表手动 ALTER 并同步 schema.sql
+
+## 自测规范（需求完成后的验证标准）
+- **纯逻辑/算法**（xirr、再平衡判定、缺失段、fund_symbol、akshare 工具等）：`uv run pytest`（离线秒级，`test/` 下）——不依赖 DB/网络，必须可重复跑
+- **交互/数据管线/真实数据源**：用 `/verify` 端到端验证（起后端 → 调真实接口 → 核对数值）；涉及外部接口改动前先实测确认字段
+- **前端改动**：`ui/` 下 `npm run build` 抓语法错
+- 改动若改到被 `test/` 覆盖的函数，同步补/改对应用例，保持全绿
