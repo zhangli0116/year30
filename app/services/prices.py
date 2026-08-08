@@ -44,10 +44,15 @@ def series(
     """
     if _is_otc(db, fund_id):
         if accum:
+            # 分红口径优先复权净值(分红复投)，缺失回退累计净值/单位净值
             rows = db.execute(
                 select(
                     models.FundNav.trade_date,
-                    func.coalesce(models.FundNav.accum_nav, models.FundNav.unit_nav),
+                    func.coalesce(
+                        models.FundNav.adj_nav,
+                        models.FundNav.accum_nav,
+                        models.FundNav.unit_nav,
+                    ),
                 )
                 .where(
                     models.FundNav.fund_id == fund_id,

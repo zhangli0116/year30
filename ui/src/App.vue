@@ -17,7 +17,7 @@
         </el-menu-item>
         <el-menu-item index="/prices">
           <el-icon><TrendCharts /></el-icon>
-          <span>基金价格</span>
+          <span>标的价格</span>
         </el-menu-item>
         <el-menu-item index="/holdings">
           <el-icon><Money /></el-icon>

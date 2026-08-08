@@ -71,6 +71,8 @@ export const pricesApi = {
   check: (data) => request.post('/prices/check', data),
   // POST /api/v1/prices/sync  {fund_id, start_date, end_date, source}
   sync: (data) => request.post('/prices/sync', data),
+  // POST /api/v1/prices/{fund_id}/adj-nav  场外基金计算复权净值（分红复投，较慢）
+  adjNav: (fundId) => request.post(`/prices/${fundId}/adj-nav`, null, { timeout: 180000 }),
 }
 
 export const cashApi = {

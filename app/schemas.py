@@ -213,6 +213,10 @@ class PriceBarOut(BaseModel):
     close_price: Decimal
     volume: Optional[int] = None
     source: str = "tencent"
+    # 场外基金净值三口径（仅 otc 返回；etf/股票为 None）
+    unit_nav: Optional[Decimal] = None  # 单位净值
+    accum_nav: Optional[Decimal] = None  # 累计净值（现金分红线性）
+    adj_nav: Optional[Decimal] = None  # 复权净值（分红复投口径）
 
 
 class PriceSyncIn(BaseModel):

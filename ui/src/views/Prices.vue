@@ -4,8 +4,8 @@
       <template #header>
         <div class="card-header">
           <div class="card-title">
-            <span class="title">基金价格</span>
-            <span class="subtitle">K线 · 成交量 · 五档盘口</span>
+            <span class="title">标的价格</span>
+            <span class="subtitle">{{ isOtc ? '净值走势（复权 · 累计 · 单位）' : 'K线 · 成交量 · 五档盘口' }}</span>
           </div>
           <div class="header-right">
             <el-select v-model="fundId" placeholder="选择基金" style="width: 200px" @change="onFundChange">
@@ -35,6 +35,14 @@
                 @change="onDateChange"
               />
             </div>
+            <el-button
+              v-if="isOtc"
+              :loading="adjNavLoading"
+              title="拉分红明细并按单位净值计算复权净值（分红复投口径，需几十秒）"
+              @click="runAdjNav"
+            >
+              计算复权净值
+            </el-button>
             <el-button type="primary" :loading="syncing" @click="doSync">
               同步缺失价格
             </el-button>
@@ -177,6 +185,7 @@ const currentSourceLabel = computed(() => {
 const startDate = ref('')
 const endDate = ref('')
 const syncing = ref(false)
+const adjNavLoading = ref(false)
 const chartLoading = ref(false)
 const syncResult = ref(null)
 const bars = ref([]) // [{trade_date, open, high, low, close, volume}]
@@ -301,6 +310,21 @@ const sourceTip = computed(() => {
   return ''
 })
 
+// 计算复权净值（分红复投口径）：拉分红明细 + 按单位净值计算，较慢（几十秒）
+async function runAdjNav() {
+  if (!fundId.value) return
+  adjNavLoading.value = true
+  try {
+    const r = await pricesApi.adjNav(fundId.value)
+    ElMessage.success(`复权净值已更新 ${r.updated} 条，刷新图表`)
+    await loadKline()
+  } catch {
+    // 拦截器已提示
+  } finally {
+    adjNavLoading.value = false
+  }
+}
+
 // 先检查缺失时间段 → 弹窗确认 → 确认后才实际同步
 async function doSync() {
   if (!fundId.value || !startDate.value || !endDate.value) {
@@ -374,13 +398,24 @@ function render() {
     }
   }
 
-  // 场外基金：无 OHLC，绘单位净值折线
+  // 场外基金：无 OHLC，绘三条净值曲线（复权 · 累计 · 单位）
   if (isOtc.value) {
-    const navData = bars.value.map((b) => Number(b.close_price))
+    const adj = bars.value.map((b) => (b.adj_nav == null ? null : Number(b.adj_nav)))
+    const accum = bars.value.map((b) => (b.accum_nav == null ? null : Number(b.accum_nav)))
+    const unit = bars.value.map((b) => (b.unit_nav == null ? null : Number(b.unit_nav)))
+    const line = (name, data, color, width) => ({
+      name,
+      type: 'line',
+      data,
+      smooth: true,
+      showSymbol: false,
+      lineStyle: { width, color },
+      itemStyle: { color },
+    })
     chart.setOption(
       {
         tooltip: { trigger: 'axis' },
-        legend: { data: ['累计净值'], top: 0, left: 'center' },
+        legend: { data: ['复权净值', '累计净值', '单位净值'], top: 0, left: 'center' },
         grid: [{ left: 70, right: 20, top: 40, bottom: 60 }],
         xAxis: [
           {
@@ -396,16 +431,9 @@ function render() {
           { type: 'slider', xAxisIndex: 0, start: zoomStart, end: zoomEnd, height: 20 },
         ],
         series: [
-          {
-            name: '累计净值',
-            type: 'line',
-            data: navData,
-            smooth: true,
-            showSymbol: false,
-            lineStyle: { width: 2, color: '#409eff' },
-            itemStyle: { color: '#409eff' },
-            areaStyle: { opacity: 0.08 },
-          },
+          line('复权净值', adj, '#409eff', 2.5),
+          line('累计净值', accum, '#e6a23c', 1.5),
+          line('单位净值', unit, '#909399', 1.5),
         ],
       },
       forceReset

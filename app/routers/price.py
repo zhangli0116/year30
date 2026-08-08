@@ -7,7 +7,7 @@ from app import crud, models, schemas
 from app.database import get_db
 from app.logger import logger
 from app.schemas import ApiResponse, error, success
-from app.services import datasource, prices as price_svc
+from app.services import adjnav, datasource, prices as price_svc
 from app.services.price import FUND_TYPE_OTC
 
 router = APIRouter(prefix="/api/v1/prices", tags=["prices"])
@@ -49,7 +49,7 @@ def get_prices(
     if fund is None:
         return error(40400, f"基金 {fund_id} 不存在")
     if fund.fund_type == FUND_TYPE_OTC:
-        # 场外基金无 OHLC，把净值映射为 PriceBarOut（close=累计净值[分红再投口径]，其余空）
+        # 场外基金无 OHLC，把净值映射为 PriceBarOut（close=复权净值优先，另带三个净值口径）
         rows = crud.nav.list_navs(db, fund_id, start_date, end_date)
         return success(
             [
@@ -59,9 +59,16 @@ def get_prices(
                     open_price=None,
                     high_price=None,
                     low_price=None,
-                    close_price=r.accum_nav if r.accum_nav is not None else r.unit_nav,
+                    close_price=(
+                        r.adj_nav
+                        if r.adj_nav is not None
+                        else (r.accum_nav if r.accum_nav is not None else r.unit_nav)
+                    ),
                     volume=None,
                     source=r.source,
+                    unit_nav=r.unit_nav,
+                    accum_nav=r.accum_nav,
+                    adj_nav=r.adj_nav,
                 )
                 for r in rows
             ]
@@ -140,3 +147,25 @@ def sync_prices(
             range_end=payload.end_date,
         )
     )
+
+
+@router.post("/{fund_id}/adj-nav", response_model=ApiResponse)
+def compute_adj_nav(
+    fund_id: int, db: Session = Depends(get_db)
+) -> ApiResponse:
+    """对场外基金计算复权净值（分红复投口径）：拉分红明细 + 按单位净值计算并写回 adj_nav。
+
+    免费数据源无复权净值，这里自己算（较慢：按年拉全市场分红表，需几十秒）。
+    计算后价格页展示与回测会优先用复权净值。
+    """
+    fund = db.get(models.Fund, fund_id)
+    if fund is None:
+        return error(40400, f"基金 {fund_id} 不存在")
+    if fund.fund_type != FUND_TYPE_OTC:
+        return error(40006, "复权净值仅适用于场外基金（otc）")
+    try:
+        updated = adjnav.backfill(db, fund_id)
+    except Exception as e:  # noqa: BLE001
+        logger.error(f"计算复权净值失败：基金{fund.fund_code}：{e}")
+        return error(50001, f"计算复权净值失败：{e}")
+    return success({"fund_id": fund_id, "updated": updated}, message="复权净值已更新")

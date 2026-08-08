@@ -201,7 +201,10 @@ class FundNav(Base):
     )
     trade_date: Mapped[date] = mapped_column(Date, nullable=False, comment="净值日期")
     unit_nav: Mapped[Decimal] = mapped_column(Numeric(10, 4), nullable=False, comment="单位净值")
-    accum_nav: Mapped[Optional[Decimal]] = mapped_column(Numeric(10, 4), nullable=True, comment="累计净值")
+    accum_nav: Mapped[Optional[Decimal]] = mapped_column(Numeric(10, 4), nullable=True, comment="累计净值(现金分红线性累加)")
+    adj_nav: Mapped[Optional[Decimal]] = mapped_column(
+        Numeric(10, 4), nullable=True, comment="复权净值(分红复投口径，由单位净值+分红明细计算)"
+    )
     source: Mapped[str] = mapped_column(String(16), nullable=False, default="eastmoney", comment="数据源")
     created_at: Mapped[datetime] = mapped_column(
         DateTime, nullable=False, server_default=func.now(), comment="记录创建时间"

@@ -18,7 +18,7 @@ const router = createRouter({
   routes: [
     { path: '/', name: 'dashboard', component: Dashboard, meta: { title: '汇总' } },
     { path: '/funds', name: 'funds', component: Funds, meta: { title: '基金管理' } },
-    { path: '/prices', name: 'prices', component: Prices, meta: { title: '基金价格' } },
+    { path: '/prices', name: 'prices', component: Prices, meta: { title: '标的价格' } },
     { path: '/holdings', name: 'holdings', component: Holdings, meta: { title: '每日权益流水' } },
     { path: '/cash', name: 'cash', component: Cash, meta: { title: '每日现金流量' } },
     { path: '/purchases', name: 'purchases', component: Purchases, meta: { title: '购买记录' } },
