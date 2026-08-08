@@ -25,3 +25,8 @@ dev = [
 [tool.pytest.ini_options]
 pythonpath = ["."]
 testpaths = ["test"]
+# 默认只跑离线单测；依赖 DB/真实数据的集成回归用 `uv run pytest -m integration`
+addopts = "-m 'not integration'"
+markers = [
+    "integration: 依赖 DB 与真实数据，需 MySQL 在跑；显式 `uv run pytest -m integration` 运行",
+]
