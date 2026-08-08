@@ -127,6 +127,13 @@
           </div>
         </div>
       </el-alert>
+      <el-alert
+        v-if="coverage && coverage.ready"
+        type="success"
+        :closable="false"
+        class="cov-alert"
+        title="数据覆盖完整：所选标的与基准在区间内均无缺失，可放心回测"
+      />
 
       <!-- 再平衡 -->
       <div class="form-section">
@@ -185,7 +192,7 @@
         </div>
         <div v-for="(fac, fi) in f.amount.factors" :key="fi" class="factor-card">
           <div class="factor-head">
-            <el-input v-model="fac.id" placeholder="因子名" style="width: 140px" />
+            <el-input v-model="fac.id" placeholder="因子名" style="width: 140px" @blur="warnFactorName(fi)" />
             <el-select v-model="fac.type" style="width: 130px">
               <el-option label="水下(距峰值)" value="drawdown" />
               <el-option label="水上(近N日涨幅)" value="drawup" />
@@ -225,13 +232,20 @@
                 style="width: 120px"
                 placeholder="—"
               />
-              <el-input-number v-model="b.mult" :min="0" :step="0.05" :precision="2" size="small" style="width: 100px" />
+              <el-input-number v-model="b.mult" :step="0.05" :precision="2" size="small" style="width: 100px" />
               <el-button link type="danger" @click="removeBand(fi, bi)">删</el-button>
             </div>
             <el-button size="small" plain @click="addBand(fi)">＋ 添加档位</el-button>
           </div>
         </div>
         <el-button size="small" type="primary" plain @click="addFactor">＋ 添加因子</el-button>
+        <el-alert
+          v-if="duplicateFactorIds.length"
+          type="warning"
+          :closable="false"
+          class="dup-alert"
+          :title="`存在重名因子，请修改因子名：${duplicateFactorIds.join('、')}`"
+        />
       </div>
 
       <div class="run-bar">
@@ -304,6 +318,14 @@ const f = reactive({
 })
 
 function addFactor() {
+  if (duplicateFactorIds.value.length) {
+    ElMessage.warning(`存在重名因子，请先修改：${duplicateFactorIds.value.join('、')}`)
+    return
+  }
+  if (f.amount.factors.some((x) => !x.id.trim())) {
+    ElMessage.warning('存在未命名的因子，请先填写因子名或删除后再添加')
+    return
+  }
   f.amount.factors.push({
     id: '',
     type: 'drawdown',
@@ -312,6 +334,24 @@ function addFactor() {
     bands: [{ min: null, max: 0, mult: 1.0 }],
   })
 }
+function warnFactorName(fi) {
+  const name = f.amount.factors[fi].id.trim()
+  if (!name) return
+  if (f.amount.factors.some((x, i) => i !== fi && x.id.trim() === name)) {
+    ElMessage.warning(`因子名「${name}」已存在，请修改`)
+  }
+}
+const duplicateFactorIds = computed(() => {
+  const seen = new Set()
+  const dup = new Set()
+  for (const fac of f.amount.factors) {
+    const name = fac.id.trim()
+    if (!name) continue
+    if (seen.has(name)) dup.add(name)
+    seen.add(name)
+  }
+  return [...dup]
+})
 function removeFactor(i) {
   f.amount.factors.splice(i, 1)
 }
@@ -364,6 +404,9 @@ const missingItems = computed(() =>
 const actionableMissing = computed(() => missingItems.value.filter((i) => i.actionable))
 const lateStartItems = computed(() => missingItems.value.filter((i) => !i.actionable))
 const coverageSummary = computed(() => {
+  if (!coverage.value?.items?.length) {
+    return '方案未配置标的或未选择基准，无法进行覆盖检查'
+  }
   const act = actionableMissing.value.length
   const late = lateStartItems.value.length
   const parts = []
@@ -567,6 +610,9 @@ onMounted(async () => {
 }
 .cov-alert {
   margin-bottom: 12px;
+}
+.dup-alert {
+  margin-top: 10px;
 }
 .cov-body {
   display: flex;
