@@ -232,7 +232,7 @@
             <el-button size="small" plain @click="addBand(fi)">＋ 添加档位</el-button>
           </div>
         </div>
-        <el-button size="small" type="primary" plain @click="addFactor">＋ 添加因子</el-button>
+        <el-button size="small" type="primary" plain @click="openAddFactorDialog">＋ 添加因子</el-button>
         <el-alert
           v-if="duplicateFactorIds.length"
           type="warning"
@@ -248,6 +248,31 @@
         <span v-if="result" class="hint">共 {{ result.trades.length }} 笔成交；交易明细中的「金额缩放」列显示每期被因子调整的倍数</span>
       </div>
     </el-card>
+
+    <el-dialog v-model="factorDialogVisible" title="添加动态金额因子" width="520px" :close-on-click-modal="false">
+      <div class="preset-list">
+        <div
+          v-for="p in FACTOR_PRESETS"
+          :key="p.id"
+          class="preset-item"
+          :class="{ active: selectedPreset && selectedPreset.id === p.id }"
+          @click="selectedPreset = p"
+        >
+          <div class="preset-head">
+            <span class="preset-name">{{ p.id }}</span>
+            <span class="preset-label">{{ p.label }}</span>
+          </div>
+          <div class="preset-desc">{{ p.desc }}</div>
+          <div class="preset-bands">
+            <span v-for="(b, bi) in p.bands" :key="bi" class="band-chip">{{ bandText(b) }} → ×{{ b.mult }}</span>
+          </div>
+        </div>
+      </div>
+      <template #footer>
+        <el-button @click="factorDialogVisible = false">取消</el-button>
+        <el-button type="primary" :disabled="!selectedPreset" @click="confirmAddFactor">确认添加</el-button>
+      </template>
+    </el-dialog>
 
     <BacktestCharts :result="result" :loading="loading" :fund-name-map="fundNameMap" />
   </div>
@@ -275,30 +300,41 @@ const benchmarks = ref([])
 const benchmarkList = ref([])
 const fundNameMap = ref({}) // 基金代码 → 名称（持仓占比图展示用）
 
-const defaultFactors = () => [
+const FACTOR_PRESETS = [
   {
-    id: '水下超跌',
     type: 'drawdown',
-    enabled: true,
+    id: '水下超跌',
     window: 20,
     bands: [
       { min: null, max: -15, mult: 1.2 },
       { min: -15, max: -8, mult: 1.1 },
       { min: -8, max: 0, mult: 1.0 },
     ],
+    label: '水下（距峰值跌幅）',
+    desc: '相对历史峰值越深越加码：跌得越多，每期买入越多',
   },
   {
-    id: '水上回调',
     type: 'drawup',
-    enabled: true,
+    id: '水上回调',
     window: 20,
     bands: [
       { min: 8, max: null, mult: 0.85 },
       { min: 4, max: 8, mult: 0.9 },
       { min: 0, max: 4, mult: 1.0 },
     ],
+    label: '水上（近N日涨幅）',
+    desc: '近 N 日涨得越急越减仓：涨多回调，每期买入越少',
   },
 ]
+
+const cloneFactor = (p) => ({
+  id: p.id,
+  type: p.type,
+  enabled: true,
+  window: p.window,
+  bands: p.bands.map((b) => ({ ...b })),
+})
+const defaultFactors = () => FACTOR_PRESETS.map(cloneFactor)
 
 const f = reactive({
   buy_rebalance: true,
@@ -311,22 +347,32 @@ const f = reactive({
   amount: { base: null, factors: defaultFactors() },
 })
 
-function addFactor() {
-  if (duplicateFactorIds.value.length) {
-    ElMessage.warning(`存在重名因子，请先修改：${duplicateFactorIds.value.join('、')}`)
+const factorDialogVisible = ref(false)
+const selectedPreset = ref(null)
+
+function openAddFactorDialog() {
+  selectedPreset.value = null
+  factorDialogVisible.value = true
+}
+function bandText(b) {
+  if (b.min == null && b.max == null) return '任意区间'
+  if (b.min == null) return `≤${b.max}%`
+  if (b.max == null) return `≥${b.min}%`
+  return `${b.min}%~${b.max}%`
+}
+function confirmAddFactor() {
+  if (!selectedPreset.value) {
+    ElMessage.warning('请先选择因子策略')
     return
   }
-  if (f.amount.factors.some((x) => !x.id.trim())) {
-    ElMessage.warning('存在未命名的因子，请先填写因子名或删除后再添加')
-    return
+  const name = selectedPreset.value.id
+  if (f.amount.factors.some((x) => x.id.trim() === name)) {
+    ElMessage.warning(`因子「${name}」已存在，无法重复添加`)
+    return // 弹窗保持打开，可换选其他策略
   }
-  f.amount.factors.push({
-    id: '',
-    type: 'drawdown',
-    enabled: true,
-    window: 20,
-    bands: [{ min: null, max: 0, mult: 1.0 }],
-  })
+  f.amount.factors.push(cloneFactor(selectedPreset.value)) // 回显由 reactive 自动完成
+  factorDialogVisible.value = false
+  selectedPreset.value = null
 }
 const editingName = ref('') // 因子名编辑前的原值，重名时恢复
 function onNameFocus(fi) {
@@ -629,5 +675,58 @@ onMounted(async () => {
   flex-shrink: 0;
   display: flex;
   gap: 8px;
+}
+.preset-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.preset-item {
+  border: 1px solid #e4e7ed;
+  border-radius: 6px;
+  padding: 10px 12px;
+  background: #fafbfc;
+  cursor: pointer;
+  transition: border-color 0.15s;
+}
+.preset-item:hover {
+  border-color: #c0c4cc;
+}
+.preset-item.active {
+  border-color: #409eff;
+  background: #ecf5ff;
+}
+.preset-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+.preset-name {
+  font-size: 14px;
+  font-weight: 600;
+  color: #303133;
+}
+.preset-label {
+  font-size: 12px;
+  color: #909399;
+}
+.preset-desc {
+  font-size: 12px;
+  color: #606266;
+  margin-bottom: 8px;
+}
+.preset-bands {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.band-chip {
+  font-size: 12px;
+  color: #409eff;
+  background: #ecf5ff;
+  border: 1px solid #d9ecff;
+  border-radius: 4px;
+  padding: 1px 8px;
 }
 </style>
