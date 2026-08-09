@@ -306,9 +306,9 @@ const FACTOR_PRESETS = [
     id: '水下超跌',
     window: 20,
     bands: [
-      { min: null, max: -15, mult: 1.2 },
-      { min: -15, max: -8, mult: 1.1 },
-      { min: -8, max: 0, mult: 1.0 },
+      { min: null, max: -8, mult: 1.2 },
+      { min: -8, max: -6, mult: 1.1 },
+      { min: -6, max: 0, mult: 1.0 },
     ],
     label: '水下（距峰值跌幅）',
     desc: '相对历史峰值越深越加码：跌得越多，每期买入越多',
