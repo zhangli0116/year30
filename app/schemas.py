@@ -2,7 +2,7 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import Any, Generic, Literal, Optional, TypeVar
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 # =========================================================
 # 统一响应包装：{code, message, data}
@@ -362,6 +362,13 @@ class PlanFundIn(BaseModel):
     target_ratio: Decimal = Field(..., ge=0, le=100, decimal_places=2, description="该方案下此标的目标占比(%)")
 
 
+def _null_to_zero(v) -> Decimal:
+    """前端表单未填金额/现金比例时发 null，按 0 处理（DB 对应列 NOT NULL DEFAULT 0）。"""
+    if v is None:
+        return Decimal("0")
+    return v
+
+
 class PlanCreate(BaseModel):
     name: str = Field(..., min_length=1, max_length=64, description="方案名")
     start_date: Optional[date] = Field(None, description="起始日期（首次定投，间隔基准）")
@@ -372,6 +379,11 @@ class PlanCreate(BaseModel):
     cash_ratio: Decimal = Field(0, ge=0, le=100, decimal_places=2, description="现金目标比例(%)")
     active: bool = True
     funds: list[PlanFundIn] = Field(default_factory=list, description="标的配置")
+
+    @field_validator("amount", "cash_ratio", mode="before")
+    @classmethod
+    def _amount_cash_null_to_zero(cls, v):
+        return _null_to_zero(v)
 
 
 class PlanUpdate(BaseModel):
@@ -384,6 +396,11 @@ class PlanUpdate(BaseModel):
     cash_ratio: Optional[Decimal] = Field(None, ge=0, le=100, decimal_places=2)
     active: Optional[bool] = None
     funds: Optional[list[PlanFundIn]] = None
+
+    @field_validator("amount", "cash_ratio", mode="before")
+    @classmethod
+    def _amount_cash_null_to_zero(cls, v):
+        return _null_to_zero(v)
 
 
 class PlanFundOut(BaseModel):
