@@ -19,7 +19,9 @@ USE fund_invest;
 CREATE TABLE dca_plan (
     id                 INT UNSIGNED   NOT NULL AUTO_INCREMENT COMMENT '主键ID',
     name               VARCHAR(64)    NOT NULL COMMENT '方案名，如 稳健季定投',
-    `interval`         VARCHAR(16)    NOT NULL DEFAULT 'quarterly' COMMENT '定投间隔：weekly/monthly/quarterly',
+    start_date         DATE           NULL COMMENT '起始日期',
+    interval_days      INT            NOT NULL DEFAULT 91 COMMENT '定投间隔天数（如 91 = 约每季）',
+    tolerance_days     INT            NOT NULL DEFAULT 5 COMMENT '容错天数',
     amount             DECIMAL(14,2)  NOT NULL DEFAULT 0.00 COMMENT '每次投入金额',
     rebalance_strategy VARCHAR(16)    NOT NULL DEFAULT 'check' COMMENT '再平衡策略：buy(买入式)/sell(卖出式)/check(偏离分析)',
     cash_ratio         DECIMAL(5,2)   NOT NULL DEFAULT 0.00 COMMENT '现金目标比例(%)，方案内 Σ标的+现金=100',
@@ -45,7 +47,7 @@ CREATE TABLE plan_fund (
         ON UPDATE CASCADE ON DELETE CASCADE,
     CONSTRAINT fk_pf_fund FOREIGN KEY (fund_id) REFERENCES fund (id)
         ON UPDATE CASCADE ON DELETE CASCADE
-) ENGINE = InnoDB COMMENT = '方案-标的配置';
+) ENGINE = InnoDB COMMENT = '方案-标的配置表（某方案下每只基金的目标占比）';
 
 -- --------------------------------------------------
 -- 表 3：基金维度表 —— 存放你长期持有的基金标的
@@ -89,11 +91,11 @@ CREATE TABLE quarter (
     id              INT UNSIGNED    NOT NULL AUTO_INCREMENT COMMENT '主键ID',
     plan_id         INT UNSIGNED    NOT NULL COMMENT '方案ID -> dca_plan.id',
     period          VARCHAR(10)     NOT NULL COMMENT '周期标识，如 2026Q3',
-    start_date      DATE            NULL COMMENT '周期开始日期',
-    end_date        DATE            NULL COMMENT '周期结束日期',
+    start_date      DATE            NULL COMMENT '周期开始日期（非必填，展示用）',
+    end_date        DATE            NULL COMMENT '周期结束日期（非必填，展示用）',
     budget          DECIMAL(14,2)   NOT NULL DEFAULT 0.00 COMMENT '本周期预算，如 12500',
-    equity_amount   DECIMAL(14,2)   NOT NULL DEFAULT 0.00 COMMENT '权益投入(本金，不含手续费)',
-    total_fee       DECIMAL(14,2)   NOT NULL DEFAULT 0.00 COMMENT '本周期手续费总额',
+    equity_amount   DECIMAL(14,2)   NOT NULL DEFAULT 0.00 COMMENT '权益类（基金）投入总额 = Σ本季各基金购买金额',
+    total_fee       DECIMAL(14,2)   NOT NULL DEFAULT 0.00 COMMENT '本季度手续费总额',
     cash_amount     DECIMAL(14,2)   NOT NULL DEFAULT 0.00 COMMENT '剩余现金 = budget - equity_amount - total_fee',
     note            VARCHAR(255)    NULL COMMENT '备注，如 2026Q3 定投',
     created_at      DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
@@ -109,6 +111,7 @@ CREATE TABLE quarter (
 -- --------------------------------------------------
 CREATE TABLE purchase_record (
     id              INT UNSIGNED    NOT NULL AUTO_INCREMENT COMMENT '主键ID',
+    type            VARCHAR(8)      NOT NULL DEFAULT 'buy' COMMENT '交易类型：buy=买入 / sell=卖出',
     plan_id         INT UNSIGNED    NOT NULL COMMENT '所属方案ID -> dca_plan.id',
     quarter_id      INT UNSIGNED    NULL     COMMENT '关联季度汇总表 -> quarter.id',
     fund_id         INT UNSIGNED    NOT NULL COMMENT '基金ID -> fund.id',
@@ -151,7 +154,7 @@ CREATE TABLE fund_price (
     KEY idx_trade_date (trade_date),
     CONSTRAINT fk_price_fund FOREIGN KEY (fund_id) REFERENCES fund (id)
         ON UPDATE CASCADE ON DELETE CASCADE
-) ENGINE = InnoDB COMMENT = '基金历史日线价格';
+) ENGINE = InnoDB COMMENT = '基金历史日线(OHLC)';
 
 -- --------------------------------------------------
 -- 表 5：对比基准指数（回测用）
@@ -169,13 +172,13 @@ CREATE TABLE benchmark (
     UNIQUE KEY uk_symbol (symbol),
     CONSTRAINT fk_benchmark_fund FOREIGN KEY (fund_id) REFERENCES fund (id)
         ON UPDATE CASCADE ON DELETE SET NULL
-) ENGINE = InnoDB COMMENT = '对比基准指数';
+) ENGINE = InnoDB COMMENT = '对比基准指数（回测用）；fund_id 非空=代理基准（用基金历史价代替指数）';
 
 -- --------------------------------------------------
 -- 表 6：基准指数历史日线（回测对比用）
 -- --------------------------------------------------
 CREATE TABLE benchmark_price (
-    id           INT UNSIGNED  NOT NULL AUTO_INCREMENT COMMENT '主键ID',
+    id           INT           NOT NULL AUTO_INCREMENT COMMENT '主键ID',
     benchmark_id INT UNSIGNED  NOT NULL COMMENT '基准ID -> benchmark.id',
     trade_date   DATE          NOT NULL COMMENT '交易日',
     close_price  DECIMAL(10,4) NOT NULL COMMENT '收盘点位',
@@ -184,7 +187,7 @@ CREATE TABLE benchmark_price (
     UNIQUE KEY uk_benchmark_date (benchmark_id, trade_date),
     CONSTRAINT fk_bp_benchmark FOREIGN KEY (benchmark_id) REFERENCES benchmark (id)
         ON UPDATE CASCADE ON DELETE CASCADE
-) ENGINE = InnoDB COMMENT = '基准指数历史日线';
+) ENGINE = InnoDB COMMENT = '基准指数历史日线（回测对比用）';
 
 -- 基准种子（回测对比：沪深300/上证指数/创业板指直连指数；标普500 用 513500ETF 代理，人民币口径）
 INSERT INTO benchmark (symbol, name, source, fund_id) VALUES
@@ -223,7 +226,7 @@ CREATE TABLE fund_cash_daily (
     id          INT UNSIGNED   NOT NULL AUTO_INCREMENT COMMENT '主键ID',
     plan_id     INT UNSIGNED   NOT NULL COMMENT '方案ID -> dca_plan.id',
     trade_date  DATE           NOT NULL COMMENT '日期（日历日，含周末）',
-    increment   DECIMAL(14,2)  NOT NULL DEFAULT 0.00 COMMENT '当日现金增量',
+    increment   DECIMAL(14,2)  NOT NULL DEFAULT 0.00 COMMENT '当日现金增量（预算+ / 买入- / 卖出+ / 手续费-）',
     cash_amount DECIMAL(14,2)  NOT NULL DEFAULT 0.00 COMMENT '当日累计现金余额',
     created_at  DATETIME       NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '记录创建时间',
     PRIMARY KEY (id),
@@ -236,7 +239,7 @@ CREATE TABLE fund_cash_daily (
 -- 表 7：系统键值配置（如再平衡判定阈值）
 -- --------------------------------------------------
 CREATE TABLE app_setting (
-    id         INT UNSIGNED  NOT NULL AUTO_INCREMENT COMMENT '主键ID',
+    id         INT           NOT NULL AUTO_INCREMENT COMMENT '主键ID',
     `key`      VARCHAR(64)   NOT NULL COMMENT '配置键',
     `value`    VARCHAR(255)  NOT NULL COMMENT '配置值',
     created_at DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
