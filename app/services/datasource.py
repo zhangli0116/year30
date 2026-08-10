@@ -124,16 +124,23 @@ def list_type_configs(db: Session) -> list[dict]:
 
 # ---- fund → symbol 解析（完整行情代码）----
 def fund_symbol(exchange: str | None, code: str) -> str:
-    """6 位基金代码 → 完整 symbol；按交易所 sh/sz，未知回退首位启发式。
+    """6 位基金代码 → 完整 symbol。
 
-    修复：现有代码对所有基金一律强制 `sh` 前缀，深交所标的（如 159920）会取错。
+    A股/ETF/LOF 的交易所由代码段唯一确定（5/6 → 上交所，0/1/3 → 深交所），
+    不应依赖 fund 表 exchange 字段：该字段手工录入可能录错（如 159928 误录「上交所」），
+    若优先信任它会拼出 sh159928 这类无效代码，导致实时行情/五档盘口查无此数据。
+    故按代码前缀判定，exchange 仅在前缀无法判定（如北交所 4/8）时兜底。
     """
+    if code[:1] in ("5", "6"):
+        return f"sh{code}"
+    if code[:1] in ("0", "1", "2", "3"):
+        return f"sz{code}"
     if exchange:
         if "深" in exchange:
             return f"sz{code}"
         if "上" in exchange:
             return f"sh{code}"
-    return f"sh{code}" if code[:1] in ("5", "6") else f"sz{code}"
+    return f"sz{code}"
 
 
 def resolve_symbols(db: Session, codes: list[str]) -> dict[str, str]:
