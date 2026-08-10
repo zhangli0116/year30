@@ -20,7 +20,9 @@ def list_funds(
     page_size: int,
     keyword: str | None = None,
 ) -> tuple[list[models.Fund], int]:
-    stmt = select(models.Fund)
+    # 排除现金伪基金(000000)（由 quarter 表承载），保证 total 与 items 口径一致，
+    # 否则前端隐藏现金后会出现 total 与实际分页错位（末页基金不可达）
+    stmt = select(models.Fund).where(models.Fund.fund_code != "000000")
     if keyword:
         like = f"%{keyword}%"
         stmt = stmt.where(

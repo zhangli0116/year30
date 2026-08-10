@@ -334,10 +334,9 @@ async function load() {
   loading.value = true
   try {
     const data = await fundsApi.list(query)
-    // 现金基金不参与基金管理，仅由 quarter 表承载，这里隐藏
-    funds.value = data.items.filter((f) => f.fund_code !== '000000')
-    const hasCash = data.items.some((f) => f.fund_code === '000000')
-    total.value = data.total - (hasCash ? 1 : 0)
+    // 现金伪基金(000000)已由后端 list_funds 排除，total 与 items 口径一致，直接使用
+    funds.value = data.items
+    total.value = data.total
   } finally {
     loading.value = false
   }
