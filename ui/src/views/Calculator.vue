@@ -53,6 +53,9 @@
               style="width: 100%"
             />
             <div class="fee-hint">手续费 = max(5, 本金×费率)，不足 5 元按 5 元</div>
+            <div class="stat-label fee-label">允许动用现有现金</div>
+            <el-switch v-model="allowUseCash" @change="onAllowUseCashChange" />
+            <div class="fee-hint">勾选后本期最大投入 = 本期预算 ＋ 剩余现有现金（¥{{ money(cashCurrent) }}）</div>
           </el-card>
         </el-col>
         <el-col :span="8">
@@ -183,7 +186,9 @@
         title="现金"
       >
         <div class="cash-flow">
-          现有现金 ¥{{ money(cashCurrent) }} ＋ 本期现金 ¥{{ money(view.cashNew) }}
+          现有现金 ¥{{ money(cashCurrent) }}
+          <template v-if="view.cashNew < 0">－ 动用现金 ¥{{ money(-view.cashNew) }}</template>
+          <template v-else>＋ 本期现金 ¥{{ money(view.cashNew) }}</template>
           ＝ 录入后现金 ¥{{ money(view.cashFinal) }}
           （<b>录入后占比 {{ view.cashPct == null ? '-' : view.cashPct.toFixed(2) + '%' }}</b>
           ，目标 {{ view.cashTargetPct.toFixed(1) }}%）
@@ -258,7 +263,8 @@
       <div class="entry-foot">
         <span>手续费合计 <b>¥{{ money(confirmData.totalFee) }}</b></span>
         <span class="entry-divider">｜</span>
-        <span>现金 <b class="entry-cash">¥{{ money(confirmData.cashAmount) }}</b></span>
+        <span v-if="confirmData.cashAmount < 0">动用现金 <b class="entry-cash">¥{{ money(-confirmData.cashAmount) }}</b></span>
+        <span v-else>现金 <b class="entry-cash">¥{{ money(confirmData.cashAmount) }}</b></span>
       </div>
       <div class="entry-hint">
         确认后录入「{{ confirmData.period }}」：本期权益 / 手续费 / 剩余现金将自动重算。
@@ -293,6 +299,11 @@ const loadingQuote = ref(false)
 const quoteTime = ref(null)
 const submitting = ref(false)
 const cashCurrent = ref(0) // 现有现金 = Σ quarter.cash_amount
+const allowUseCash = ref(false) // 允许动用现有现金：本期最大投入 = 预算 + 剩余现有现金
+// 本期可投入上限：默认 = 本期预算；勾选「允许动用现有现金」后 = 预算 + 剩余现有现金
+const investCap = computed(() =>
+  allowUseCash.value ? budget.value + cashCurrent.value : budget.value
+)
 const quarterDate = ref(todayStr())
 const quarterNote = ref(defaultNote())
 const fundRows = ref([])
@@ -347,7 +358,10 @@ const view = computed(() => {
     totalFee += fee
   })
 
-  const cashNew = Math.max(0, budget.value - fundAmount)
+  // 允许动用现有现金时，本期现金可为负（= 净动用的存量现金），下限 -现有现金 保证录入后现金 ≥ 0
+  const cashNew = allowUseCash.value
+    ? Math.max(-cashCurrent.value, budget.value - fundAmount)
+    : Math.max(0, budget.value - fundAmount)
   const cashFinal = cashCurrent.value + cashNew
   // 录入后总资产 = 现有总市值 + 预算 − 手续费（手续费是纯成本，不成为资产）
   const finalTotal = currentTotal + budget.value - totalFee
@@ -408,19 +422,24 @@ function sliderMax(row) {
   return Math.max(0, 100 - others)
 }
 
-// ---- 滑块 → 手数（全局重算 + 预算上限）----
-// 每只基金按目标占比反推需买本金；若总缺口超过本期预算，则按缺口比例缩放，
-// 保证「本金 + 手续费」总投入 ≤ 预算，不会超支。
+// ---- 滑块 → 手数（全局重算 + 可投入上限）----
+// 每只基金按目标占比反推需买本金；若总缺口超过本期可投入上限，则按缺口比例缩放，
+// 保证「本金 + 手续费」总投入 ≤ 上限，不会超支。
+// 上限 = 本期预算；勾选「允许动用现有现金」后 = 预算 + 剩余现有现金。
 function onSlider(changedRow) {
   changedRow._manual = false
+  recalcAutoHands()
+}
+
+function recalcAutoHands() {
   const rows = fundRows.value
   const manual = rows.filter((r) => r._manual)
   const auto = rows.filter((r) => !r._manual)
   const finalTotal = view.value.finalTotal
 
-  // 手动行占用的金额（本金+手续费）先从预算里扣
+  // 手动行占用的金额（本金+手续费）先从可投入上限里扣
   const manualAmount = manual.reduce((s, r) => s + (r.amount || 0), 0)
-  const budgetForAuto = Math.max(0, budget.value - manualAmount)
+  const capForAuto = Math.max(0, investCap.value - manualAmount)
 
   // 每个自动行的目标缺口（本金）
   const needs = auto.map((r) => {
@@ -431,14 +450,19 @@ function onSlider(changedRow) {
     return { row: r, handPrice, need }
   })
   const totalNeed = needs.reduce((s, x) => s + x.need, 0)
-  // 本金上限 = 预算 − 手动行 − 手续费底线（每自动行至少 5 元）；
+  // 本金上限 = 可投入上限 − 手动行 − 手续费底线（每自动行至少 5 元）；
   // 再除以 (1+费率) 为大额本金预留其手续费溢出（费率>5元时），保证「本金+手续费」绝不超支
-  const principalCap = Math.max(0, (budgetForAuto - auto.length * 5) / (1 + feeRate.value / 100))
+  const principalCap = Math.max(0, (capForAuto - auto.length * 5) / (1 + feeRate.value / 100))
   const scale = totalNeed > 0 && totalNeed > principalCap ? principalCap / totalNeed : 1
   needs.forEach(({ row, handPrice, need }) => {
     const alloc = need * scale
     row.hands = handPrice && handPrice > 0 ? Math.floor(alloc / handPrice) : 0
   })
+}
+
+// 切换「允许动用现有现金」：按新的投入上限重算自动行手数
+function onAllowUseCashChange() {
+  recalcAutoHands()
 }
 
 // ---- 手数 → 滑块（回算隐含占比）----
@@ -513,10 +537,11 @@ function submitQuarter() {
     ElMessage.warning('请选择买入日期')
     return
   }
-  // 防止手动覆盖手数后总投入超过预算（否则季度 cash_amount 会变负）
-  if (view.value.fundAmount > budget.value + 0.01) {
+  // 防止手动覆盖手数后总投入超过可投入上限（否则季度 cash_amount 会跌破现金池）
+  if (view.value.fundAmount > investCap.value + 0.01) {
+    const capLabel = allowUseCash.value ? '预算＋现有现金' : '预算'
     ElMessage.warning(
-      `本期投入 ${money(view.value.fundAmount)} 元超出预算 ${money(budget.value)} 元，请调整预算或减少手数`
+      `本期投入 ${money(view.value.fundAmount)} 元超出${capLabel}上限 ${money(investCap.value)} 元，请调整预算或减少手数`
     )
     return
   }
